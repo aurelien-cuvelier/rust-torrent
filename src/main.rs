@@ -1,9 +1,15 @@
-use std::{fs::File, process};
-mod bencode;
-mod torrent_file;
+use std::{env::args, fs::File, process};
+
+use rust_torrent::bencode;
 
 fn main() {
-    let file_name = "./libreoffice-help-25.8.4.2.tar.xz.torrent";
+    let args: Vec<String> = args().collect();
+
+    if args.len() != 2 {
+        panic!("No file path given in args")
+    }
+
+    let file_name = &args[1];
 
     let file_res = File::open(file_name);
 

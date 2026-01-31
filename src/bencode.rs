@@ -16,6 +16,10 @@ enum BencodeType {
     Terminator,
 }
 
+/**
+ * @TODO make sure that we have the minimum mandatory data according to torrent files BEP
+ */
+
 static SEMI_COLON: u8 = b':';
 
 fn parse_string_to_usize(str: String) -> usize {
@@ -79,7 +83,16 @@ fn decode_string(buf_reader: &mut BufReader<File>) -> String {
 fn decode_next_torrent_key(buf_reader: &mut BufReader<File>) -> TorrentKeys {
     let potential_torrent_key = decode_string(buf_reader);
 
-    return TorrentKeys::from_str(potential_torrent_key.as_str()).unwrap();
+    let torrent_key = TorrentKeys::from_str(potential_torrent_key.as_str());
+
+    if torrent_key == TorrentKeys::UnsupportedKey {
+        println!(
+            "unsupported field \"{}\" will be ignored",
+            potential_torrent_key
+        );
+    }
+
+    return torrent_key;
 }
 
 fn handle_binary_field(
@@ -105,7 +118,10 @@ fn handle_binary_field(
             buf_reader.read_exact(&mut data).unwrap();
             torrent_file.info.sha256 = Some(data);
         }
-        _ => panic!("unsupported key in hande_binary: {}", key.as_str()),
+        TorrentKeys::UnsupportedKey => {
+            println!("handle_binary_field: ignoring unsupported key")
+        }
+        _ => panic!("handle_binary_field: unhandled key: {}", key.as_str()),
     }
 }
 
@@ -147,7 +163,10 @@ fn handle_string_field(
         TorrentKeys::CreatedBy => torrent_file.created_by = value,
         TorrentKeys::Md5Sum => torrent_file.info.md5sum = Some(value),
         TorrentKeys::Name => torrent_file.info.name = value,
-        _ => panic!("handle_string_field unsupported key: {}", key.as_str()),
+        TorrentKeys::UnsupportedKey => {
+            //println!("handle_string_field ignoring unsupported key")
+        }
+        _ => panic!("handle_string_field unhandled key: {}", key.as_str()),
     }
 }
 
@@ -160,8 +179,7 @@ fn handle_integer_field(
 
     let mut int_buf = Vec::<u8>::with_capacity(10);
 
-    let read_bytes = buf_reader.read_until(b'e', &mut int_buf);
-    println!("read bytes: {:?}", read_bytes);
+    let _read_bytes = buf_reader.read_until(b'e', &mut int_buf);
 
     int_buf.pop(); //removing the read 'e'
 
@@ -171,9 +189,11 @@ fn handle_integer_field(
         TorrentKeys::CreationDate => torrent_file.creation_date = uint_value,
         TorrentKeys::Length => torrent_file.info.length = uint_value,
         TorrentKeys::PieceLength => torrent_file.info.piece_length = uint_value,
-
+        TorrentKeys::UnsupportedKey => {
+            //println!("handle_integer_field ignoring unsupported key")
+        }
         _ => {
-            println!("handle_integer_field unsupported key: {}", key.as_str());
+            println!("handle_integer_field unhandled key: {}", key.as_str());
         }
     }
 }
@@ -230,7 +250,10 @@ fn handle_string_list_field(
     match key {
         TorrentKeys::Sources => torrent_file.sources = Some(extracted_list),
         TorrentKeys::UrlList => torrent_file.url_list = Some(extracted_list),
-        _ => println!("handle_string_list_field unsupported key: {}", key.as_str()),
+        TorrentKeys::UnsupportedKey => {
+            //println!("handle_string_list_field ignoring unsupported key")
+        }
+        _ => println!("handle_string_list_field unhandled key: {}", key.as_str()),
     }
 }
 
@@ -265,7 +288,6 @@ fn decode_dictionary_field(torrent_file: &mut TorrentFile, buf_reader: &mut BufR
 
     let mut current_key: Option<TorrentKeys> = None;
     loop {
-        println!("Torrent file: {:?}\n", torrent_file);
         let next_type = extract_next_type(buf_reader);
 
         if next_type.is_none() {
@@ -273,10 +295,6 @@ fn decode_dictionary_field(torrent_file: &mut TorrentFile, buf_reader: &mut BufR
         }
 
         let next_type = next_type.unwrap();
-        println!(
-            "current key: {:?}  |  next type: {:?}",
-            current_key, next_type
-        );
 
         if next_type == BencodeType::Terminator {
             buf_reader.consume(1);
@@ -297,12 +315,6 @@ fn decode_dictionary_field(torrent_file: &mut TorrentFile, buf_reader: &mut BufR
 
         let current_torrent_key = current_key.unwrap();
 
-        println!(
-            "Handling {:?} with key {} | is_binary: {}",
-            next_type,
-            current_torrent_key.as_str(),
-            current_torrent_key.is_binary_field()
-        );
         match next_type {
             BencodeType::String => {
                 if current_torrent_key.is_binary_field() {
@@ -358,6 +370,8 @@ pub fn parse_torrent_file(file: File) -> Result<TorrentFile, String> {
             remaining_bytes
         );
     }
+
+    println!("Torrent file: {:?}\n", torrent_file);
 
     return Ok(torrent_file);
 }

@@ -87,6 +87,9 @@ pub enum TorrentKeys {
     Sha1,
     Sources,
     UrlList,
+
+    //We use this key whenever we meeta key in the torrent file that we don't support
+    UnsupportedKey,
 }
 
 impl TorrentKeys {
@@ -99,31 +102,24 @@ impl TorrentKeys {
         }
     }
 
-    pub fn is_integer_field(&self) -> bool {
-        match self {
-            TorrentKeys::CreationDate => true,
-            _ => false,
-        }
-    }
-
-    pub fn from_str(key: &str) -> Result<Self, String> {
+    pub fn from_str(key: &str) -> Self {
         match key {
-            "announce" => Ok(TorrentKeys::Announce),
-            "announce-list" => Ok(TorrentKeys::AnnounceList),
-            "info" => Ok(TorrentKeys::Info),
-            "comment" => Ok(TorrentKeys::Comment),
-            "created by" => Ok(TorrentKeys::CreatedBy),
-            "creation date" => Ok(TorrentKeys::CreationDate),
-            "name" => Ok(TorrentKeys::Name),
-            "length" => Ok(TorrentKeys::Length),
-            "pieces" => Ok(TorrentKeys::Pieces),
-            "piece length" => Ok(TorrentKeys::PieceLength),
-            "md5sum" => Ok(TorrentKeys::Md5Sum),
-            "sha256" => Ok(TorrentKeys::Sha256),
-            "sha1" => Ok(TorrentKeys::Sha1),
-            "sources" => Ok(TorrentKeys::Sources),
-            "url-list" => Ok(TorrentKeys::UrlList),
-            _ => Err(format!("{key} is not a torrent key")),
+            "announce" => TorrentKeys::Announce,
+            "announce-list" => TorrentKeys::AnnounceList,
+            "info" => TorrentKeys::Info,
+            "comment" => TorrentKeys::Comment,
+            "created by" => TorrentKeys::CreatedBy,
+            "creation date" => TorrentKeys::CreationDate,
+            "name" => TorrentKeys::Name,
+            "length" => TorrentKeys::Length,
+            "pieces" => TorrentKeys::Pieces,
+            "piece length" => TorrentKeys::PieceLength,
+            "md5sum" => TorrentKeys::Md5Sum,
+            "sha256" => TorrentKeys::Sha256,
+            "sha1" => TorrentKeys::Sha1,
+            "sources" => TorrentKeys::Sources,
+            "url-list" => TorrentKeys::UrlList,
+            _ => TorrentKeys::UnsupportedKey,
         }
     }
 
@@ -144,6 +140,7 @@ impl TorrentKeys {
             TorrentKeys::Sha1 => "sha1",
             TorrentKeys::Sources => "sources",
             TorrentKeys::UrlList => "url-list",
+            TorrentKeys::UnsupportedKey => "unsupported-key",
         }
     }
 }
