@@ -1,9 +1,12 @@
 use core::panic;
+use hex;
 use std::{
     fmt::Debug,
     fs::File,
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
 };
+
+use sha1::{Digest, Sha1};
 
 use crate::torrent_file::{TorrentFile, TorrentKeys};
 
@@ -282,11 +285,26 @@ fn handle_announce_list(torrent_file: &mut TorrentFile, buf_reader: &mut BufRead
     torrent_file.announce_list = Some(announce_list);
 }
 
-fn decode_dictionary_field(torrent_file: &mut TorrentFile, buf_reader: &mut BufReader<File>) {
+fn decode_dictionary_field(
+    torrent_file: &mut TorrentFile,
+    buf_reader: &mut BufReader<File>,
+    parent_key: Option<TorrentKeys>,
+) {
+    let is_info_dictionnary: bool =
+        !parent_key.is_none() && parent_key.unwrap() == TorrentKeys::Info;
+
+    let start_info_index: u64 = if is_info_dictionnary {
+        buf_reader.stream_position().unwrap()
+    } else {
+        0
+    };
+    let mut end_info_index = 0u64;
+
     //consuming the first byte (d)
     buf_reader.consume(1);
 
     let mut current_key: Option<TorrentKeys> = None;
+
     loop {
         let next_type = extract_next_type(buf_reader);
 
@@ -297,8 +315,12 @@ fn decode_dictionary_field(torrent_file: &mut TorrentFile, buf_reader: &mut BufR
         let next_type = next_type.unwrap();
 
         if next_type == BencodeType::Terminator {
+            if is_info_dictionnary {
+                end_info_index = buf_reader.stream_position().unwrap();
+            }
+
             buf_reader.consume(1);
-            return;
+            break;
         }
 
         if current_key.is_none() && next_type != BencodeType::String {
@@ -327,7 +349,7 @@ fn decode_dictionary_field(torrent_file: &mut TorrentFile, buf_reader: &mut BufR
                 handle_integer_field(torrent_file, buf_reader, current_torrent_key);
             }
             BencodeType::Dictionary => {
-                decode_dictionary_field(torrent_file, buf_reader);
+                decode_dictionary_field(torrent_file, buf_reader, Some(current_torrent_key));
             }
             BencodeType::List => {
                 if current_torrent_key == TorrentKeys::AnnounceList {
@@ -341,6 +363,31 @@ fn decode_dictionary_field(torrent_file: &mut TorrentFile, buf_reader: &mut BufR
 
         current_key = None;
     }
+
+    //a little bit archaic but good enough for now.
+    let mut handle_info_bytes = || {
+        let info_data_length: usize = (end_info_index - start_info_index + 1).try_into().unwrap();
+        let current_pos = buf_reader.stream_position().unwrap();
+        let mut info_raw_bytes = vec![0u8; info_data_length];
+        let mut hasher = Sha1::new();
+
+        let mut file = buf_reader.get_ref();
+        file.seek(SeekFrom::Start(start_info_index)).unwrap();
+        file.read_exact(&mut info_raw_bytes).unwrap();
+
+        hasher.update(&info_raw_bytes);
+
+        torrent_file.info_hash = hasher.finalize().into();
+
+        file.seek(SeekFrom::Start(current_pos)).unwrap();
+        buf_reader.seek(SeekFrom::Start(current_pos)).unwrap();
+    };
+
+    if start_info_index > 0 && end_info_index > 0 {
+        handle_info_bytes();
+    }
+
+    return;
 }
 
 pub fn parse_torrent_file(file: File) -> Result<TorrentFile, String> {
@@ -358,7 +405,7 @@ pub fn parse_torrent_file(file: File) -> Result<TorrentFile, String> {
         return Err(format!("file must start with a bencode dictionary"));
     }
 
-    decode_dictionary_field(&mut torrent_file, &mut buf_reader);
+    decode_dictionary_field(&mut torrent_file, &mut buf_reader, None);
 
     let current_pos = buf_reader.seek(SeekFrom::Current(0)).unwrap();
     let end = buf_reader.seek(SeekFrom::End(0)).unwrap();
@@ -372,6 +419,6 @@ pub fn parse_torrent_file(file: File) -> Result<TorrentFile, String> {
     }
 
     println!("Torrent file: {:?}\n", torrent_file);
-
+    println!("info hash: {}", hex::encode(torrent_file.info_hash));
     return Ok(torrent_file);
 }

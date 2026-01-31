@@ -20,6 +20,7 @@ pub struct TorrentFile {
     pub creation_date: usize,
     pub sources: Option<Vec<String>>,
     pub url_list: Option<Vec<String>>,
+    pub info_hash: [u8; 20],
 }
 
 impl Default for TorrentFile {
@@ -41,6 +42,8 @@ impl Default for TorrentFile {
             creation_date: 0,
             sources: None,
             url_list: None,
+
+            info_hash: [0u8; 20],
         }
     }
 }
