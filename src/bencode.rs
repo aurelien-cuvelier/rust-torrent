@@ -371,16 +371,13 @@ fn decode_dictionary_field(
         let mut info_raw_bytes = vec![0u8; info_data_length];
         let mut hasher = Sha1::new();
 
-        let mut file = buf_reader.get_ref();
-        file.seek(SeekFrom::Start(start_info_index)).unwrap();
-        file.read_exact(&mut info_raw_bytes).unwrap();
+        buf_reader.seek(SeekFrom::Start(start_info_index)).unwrap();
+        buf_reader.read_exact(&mut info_raw_bytes).unwrap();
+        buf_reader.seek(SeekFrom::Start(current_pos)).unwrap();
 
         hasher.update(&info_raw_bytes);
 
         torrent_file.info_hash = hasher.finalize().into();
-
-        file.seek(SeekFrom::Start(current_pos)).unwrap();
-        buf_reader.seek(SeekFrom::Start(current_pos)).unwrap();
     };
 
     if start_info_index > 0 && end_info_index > 0 {
