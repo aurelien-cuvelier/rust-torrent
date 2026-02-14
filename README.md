@@ -18,6 +18,13 @@ This is a **personal learning project** created to:
 - Torrent file structure parsing (`.torrent` files)
 - Parsing torrent metadata (announce URLs, file info, pieces, etc.)
 
+**Bencode parser design**
+- **Trait-based and reusable:** Any type can be parsed from bencode as long as it implements `BencodeParsable`. Each type has an associated key type implementing `BencodeKey` (key names and field shapes: string, integer, binary, list, nested list, dictionary).
+- **Multiple parsable types:** The same decoder is used for:
+  - **Torrent files** (`.torrent`) — `TorrentFile` and nested `MetaInfo`, read from `File`
+  - **Tracker responses** — `TrackerData` (e.g. interval, peers), read from `Cursor<Vec<u8>>`
+- **Unknown keys:** Keys that are not handled (e.g. `private`, `publisher`) are mapped to an “unsupported” key variant so their data is consumed and parsing continues instead of failing.
+
 **Future Phases:**
 - Tracker communication
 - Peer discovery and connection
@@ -26,8 +33,11 @@ This is a **personal learning project** created to:
 
 ## Project Structure
 
-- `src/bencode.rs` - Bencode format parser
-- `src/torrent_file.rs` - Torrent file data structures
+- `src/bencode.rs` - Bencode format parser and `BencodeParsable` / `BencodeKey` traits
+- `src/torrent_file.rs` - Torrent file data structures (`TorrentFile`, `MetaInfo`) and key enums
+- `src/tracker_data.rs` - Tracker response parsing (`TrackerData`)
+- `src/torrent_net.rs` - Tracker/network helpers
+- `src/client.rs` - Client identifier and shared state
 - `src/main.rs` - Entry point
 
 ## Usage
