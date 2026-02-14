@@ -237,6 +237,25 @@ fn decode_list_string<R: Read + Seek>(buf_reader: &mut BufReader<R>) -> Vec<Stri
     return strings;
 }
 
+fn decode_nested_list_string<R: Read + Seek>(buf_reader: &mut BufReader<R>) -> Vec<Vec<String>> {
+    let mut nested = Vec::new();
+    loop {
+        let next_type = extract_next_type(buf_reader).unwrap();
+        match next_type {
+            BencodeType::List => {
+                consume_next_byte(buf_reader);
+                nested.push(decode_list_string(buf_reader));
+            }
+            BencodeType::Terminator => {
+                consume_next_byte(buf_reader);
+                break;
+            }
+            _ => panic!("received type {:?} in nested list string", next_type),
+        }
+    }
+    nested
+}
+
 pub fn decode_dictionary<P: BencodeParsable + Debug>(
     target: &mut P,
     buf_reader: &mut BufReader<P::R>,
@@ -295,32 +314,17 @@ pub fn decode_dictionary<P: BencodeParsable + Debug>(
                 target.on_dictionary(unwrapped_current_key.clone(), buf_reader);
             }
             BencodeType::List => {
-                if unwrapped_current_key.is_list_of_strings() {
-                    consume_next_byte(buf_reader); //consuming 1st l character
-                    let strings = decode_list_string(buf_reader);
-                    target.on_list_string(unwrapped_current_key.clone(), strings);
-                } else if unwrapped_current_key.is_nested_list_string() {
-                    let mut nested_strings = Vec::<Vec<String>>::new();
-
-                    consume_next_byte(buf_reader); //consuming 1st l character
-
-                    loop {
-                        let next_type = extract_next_type(buf_reader).unwrap();
-                        match next_type {
-                            BencodeType::List => {
-                                consume_next_byte(buf_reader);
-                                let strings = decode_list_string(buf_reader);
-                                nested_strings.push(strings);
-                            }
-                            BencodeType::Terminator => {
-                                consume_next_byte(buf_reader);
-                                break;
-                            }
-                            _ => panic!("received type {:?} in nested list string", next_type),
-                        }
+                consume_next_byte(buf_reader); // consume 'l'
+                match () {
+                    _ if unwrapped_current_key.is_list_of_strings() => {
+                        let strings = decode_list_string(buf_reader);
+                        target.on_list_string(unwrapped_current_key.clone(), strings);
                     }
-
-                    target.on_nested_list_string(unwrapped_current_key.clone(), nested_strings);
+                    _ if unwrapped_current_key.is_nested_list_string() => {
+                        let nested_strings = decode_nested_list_string(buf_reader);
+                        target.on_nested_list_string(unwrapped_current_key.clone(), nested_strings);
+                    }
+                    _ => {}
                 }
             }
             BencodeType::Terminator => {
