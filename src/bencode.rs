@@ -1,22 +1,89 @@
 use core::panic;
-use hex;
 use std::{
     fmt::Debug,
-    fs::File,
-    io::{BufRead, BufReader, Read, Seek, SeekFrom},
+    io::{BufRead, BufReader, Read, Seek},
 };
 
-use sha1::{Digest, Sha1};
-
-use crate::torrent_file::{TorrentFile, TorrentKeys};
-
 #[derive(Debug, PartialEq)]
-enum BencodeType {
+pub enum BencodeType {
     Dictionary,
     Integer,
     List,
     String,
     Terminator,
+}
+
+pub trait BencodeKey {
+    fn is_binary_field(&self) -> bool {
+        false
+    }
+    fn is_string_field(&self) -> bool {
+        false
+    }
+    fn is_integer_field(&self) -> bool {
+        false
+    }
+    fn is_dictionary_field(&self) -> bool {
+        false
+    }
+
+    fn is_list_field(&self) -> bool {
+        false
+    }
+
+    fn is_list_of_strings(&self) -> bool {
+        false
+    }
+
+    fn is_nested_list_string(&self) -> bool {
+        false
+    }
+
+    fn is_list_of_bytes(&self) -> bool {
+        false
+    }
+
+    fn from_str(s: &str) -> Self;
+    fn as_str(&self) -> &str;
+    fn is_unsupported_key(&self) -> bool;
+}
+
+pub trait BencodeParsable: Sized + Debug {
+    type Key: BencodeKey + Debug + Clone;
+    type R: Read + Seek;
+
+    fn key_from_str(s: &str) -> Self::Key;
+
+    fn on_string_or_bytes(&mut self, key: Self::Key, _value: Vec<u8>) {
+        println!("on_string_or_bytes throwing away data for {}", key.as_str());
+    }
+    fn on_integer(&mut self, key: Self::Key, _value: usize) {
+        println!("on_integer throwing away data for {}", key.as_str());
+    }
+
+    fn on_list_string(&mut self, key: Self::Key, _value: Vec<String>) {
+        println!("on_list_string throwing away data for {}", key.as_str());
+    }
+
+    fn on_list_bytes(&mut self, key: Self::Key, _value: Vec<u8>) {
+        println!("on_list_bytes throwing away data for {}", key.as_str());
+    }
+
+    fn on_nested_list_string(&mut self, key: Self::Key, _value: Vec<Vec<String>>) {
+        println!(
+            "on_nested_list_string throwing away data for {}",
+            key.as_str()
+        );
+    }
+
+    fn on_dictionary(&mut self, key: Self::Key, buf_reader: &mut BufReader<Self::R>) {
+        println!("on_dictionary throwing away data for {}", key.as_str());
+        decode_dictionary(self, buf_reader);
+    }
+}
+
+fn consume_next_byte<R: Read + Seek>(buf_reader: &mut BufReader<R>) {
+    buf_reader.read_exact(&mut [0u8]).unwrap();
 }
 
 /**
@@ -48,7 +115,9 @@ fn is_parseable_stringified_number(str_bytes: Vec<u8>) -> bool {
     return parse_res.is_ok();
 }
 
-fn get_incoming_string_length(buf_reader: &mut BufReader<File>) -> Result<usize, String> {
+fn get_incoming_string_length<R: Read + Seek>(
+    buf_reader: &mut BufReader<R>,
+) -> Result<usize, String> {
     let mut string_length_buf = Vec::new();
 
     buf_reader
@@ -69,69 +138,24 @@ fn get_incoming_string_length(buf_reader: &mut BufReader<File>) -> Result<usize,
     ))
 }
 
-fn decode_string(buf_reader: &mut BufReader<File>) -> String {
-    let string_length = get_incoming_string_length(buf_reader).unwrap();
+fn decode_bytes<R: Read + Seek>(buf_reader: &mut BufReader<R>) -> Vec<u8> {
+    let data_length = get_incoming_string_length(buf_reader).unwrap();
 
-    let mut string_value = vec![0u8; string_length];
+    let mut data_value = vec![0u8; data_length];
 
-    let read_res = buf_reader.read(&mut string_value);
+    let read_res = buf_reader.read(&mut data_value);
 
     if read_res.is_err() {
         panic!("error reading in string {}", read_res.unwrap_err())
     }
 
-    return String::from_utf8(string_value).unwrap();
-}
-
-fn decode_next_torrent_key(buf_reader: &mut BufReader<File>) -> TorrentKeys {
-    let potential_torrent_key = decode_string(buf_reader);
-
-    let torrent_key = TorrentKeys::from_str(potential_torrent_key.as_str());
-
-    if torrent_key == TorrentKeys::UnsupportedKey {
-        println!(
-            "unsupported field \"{}\" will be ignored",
-            potential_torrent_key
-        );
-    }
-
-    return torrent_key;
-}
-
-fn handle_binary_field(
-    torrent_file: &mut TorrentFile,
-    buf_reader: &mut BufReader<File>,
-    key: TorrentKeys,
-) {
-    let data_length = get_incoming_string_length(buf_reader).unwrap();
-
-    match key {
-        TorrentKeys::Pieces => {
-            let mut data = vec![0u8; data_length];
-            buf_reader.read(&mut data).unwrap();
-            torrent_file.info.pieces = data
-        }
-        TorrentKeys::Sha1 => {
-            let mut data = [0u8; 20];
-            buf_reader.read_exact(&mut data).unwrap();
-            torrent_file.info.sha1 = Some(data);
-        }
-        TorrentKeys::Sha256 => {
-            let mut data = [0u8; 32];
-            buf_reader.read_exact(&mut data).unwrap();
-            torrent_file.info.sha256 = Some(data);
-        }
-        TorrentKeys::UnsupportedKey => {
-            println!("handle_binary_field: ignoring unsupported key")
-        }
-        _ => panic!("handle_binary_field: unhandled key: {}", key.as_str()),
-    }
+    return data_value;
 }
 
 /**
  * Extract the next type without consuming the 1st byte representing the type or the first length digit for string/bytes.
  */
-fn extract_next_type(buf_reader: &mut BufReader<File>) -> Option<BencodeType> {
+pub fn extract_next_type<R: Read + Seek>(buf_reader: &mut BufReader<R>) -> Option<BencodeType> {
     let internal_buf = buf_reader.fill_buf().unwrap();
 
     if internal_buf.len() == 0 {
@@ -151,34 +175,8 @@ fn extract_next_type(buf_reader: &mut BufReader<File>) -> Option<BencodeType> {
     });
 }
 
-fn handle_string_field(
-    torrent_file: &mut TorrentFile,
-    buf_reader: &mut BufReader<File>,
-    key: TorrentKeys,
-) {
-    assert_next_type(buf_reader, BencodeType::String);
-
-    let value = decode_string(buf_reader);
-
-    match key {
-        TorrentKeys::Announce => torrent_file.announce = value,
-        TorrentKeys::Comment => torrent_file.comment = value,
-        TorrentKeys::CreatedBy => torrent_file.created_by = value,
-        TorrentKeys::Md5Sum => torrent_file.info.md5sum = Some(value),
-        TorrentKeys::Name => torrent_file.info.name = value,
-        TorrentKeys::UnsupportedKey => {
-            //println!("handle_string_field ignoring unsupported key")
-        }
-        _ => panic!("handle_string_field unhandled key: {}", key.as_str()),
-    }
-}
-
-fn handle_integer_field(
-    torrent_file: &mut TorrentFile,
-    buf_reader: &mut BufReader<File>,
-    key: TorrentKeys,
-) {
-    buf_reader.consume(1); //consuming the i;
+fn decode_integer<R: Read + Seek>(buf_reader: &mut BufReader<R>) -> usize {
+    consume_next_byte(buf_reader); //consuming the i;
 
     let mut int_buf = Vec::<u8>::with_capacity(10);
 
@@ -186,25 +184,13 @@ fn handle_integer_field(
 
     int_buf.pop(); //removing the read 'e'
 
-    let uint_value = parse_string_to_usize(String::from_utf8(int_buf).unwrap());
-
-    match key {
-        TorrentKeys::CreationDate => torrent_file.creation_date = uint_value,
-        TorrentKeys::Length => torrent_file.info.length = uint_value,
-        TorrentKeys::PieceLength => torrent_file.info.piece_length = uint_value,
-        TorrentKeys::UnsupportedKey => {
-            //println!("handle_integer_field ignoring unsupported key")
-        }
-        _ => {
-            println!("handle_integer_field unhandled key: {}", key.as_str());
-        }
-    }
+    parse_string_to_usize(String::from_utf8(int_buf).unwrap())
 }
 
 /**
  * Will panic if the next type is None (buffer EOF) or if the type is not the expected one
  */
-fn assert_next_type(buf_reader: &mut BufReader<File>, expected_type: BencodeType) {
+pub fn assert_next_type<R: Read + Seek>(buf_reader: &mut BufReader<R>, expected_type: BencodeType) {
     let next_type_result = extract_next_type(buf_reader);
 
     if next_type_result.is_none() {
@@ -221,105 +207,59 @@ fn assert_next_type(buf_reader: &mut BufReader<File>, expected_type: BencodeType
     }
 }
 
-fn extract_string_list(buf_reader: &mut BufReader<File>) -> Vec<String> {
-    buf_reader.consume(1);
-    assert_next_type(buf_reader, BencodeType::String);
-
+fn decode_list_string<R: Read + Seek>(buf_reader: &mut BufReader<R>) -> Vec<String> {
     let mut strings = Vec::<String>::new();
-
-    loop {
-        let string_element = decode_string(buf_reader);
-
-        strings.push(string_element);
-
-        let next_type = extract_next_type(buf_reader).unwrap();
-
-        if next_type == BencodeType::Terminator {
-            buf_reader.consume(1);
-            break;
-        }
-    }
-
-    return strings;
-}
-
-fn handle_string_list_field(
-    torrent_file: &mut TorrentFile,
-    buf_reader: &mut BufReader<File>,
-    key: TorrentKeys,
-) {
-    let extracted_list = extract_string_list(buf_reader);
-
-    match key {
-        TorrentKeys::Sources => torrent_file.sources = Some(extracted_list),
-        TorrentKeys::UrlList => torrent_file.url_list = Some(extracted_list),
-        TorrentKeys::UnsupportedKey => {
-            //println!("handle_string_list_field ignoring unsupported key")
-        }
-        _ => println!("handle_string_list_field unhandled key: {}", key.as_str()),
-    }
-}
-
-fn handle_announce_list(torrent_file: &mut TorrentFile, buf_reader: &mut BufReader<File>) {
-    assert_next_type(buf_reader, BencodeType::List);
-
-    let mut announce_list = Vec::<Vec<String>>::new();
-
-    buf_reader.consume(1); //consuming the main list delimiter;
-
-    loop {
-        let next_type = extract_next_type(buf_reader).unwrap();
-
-        if next_type == BencodeType::Terminator {
-            buf_reader.consume(1);
-            break;
-        }
-
-        if next_type == BencodeType::List {
-            // buf_reader.consume(1);
-            announce_list.push(extract_string_list(buf_reader));
-            continue;
-        }
-    }
-
-    torrent_file.announce_list = Some(announce_list);
-}
-
-fn decode_dictionary_field(
-    torrent_file: &mut TorrentFile,
-    buf_reader: &mut BufReader<File>,
-    parent_key: Option<TorrentKeys>,
-) {
-    let is_info_dictionnary: bool =
-        !parent_key.is_none() && parent_key.unwrap() == TorrentKeys::Info;
-
-    let start_info_index: u64 = if is_info_dictionnary {
-        buf_reader.stream_position().unwrap()
-    } else {
-        0
-    };
-    let mut end_info_index = 0u64;
-
-    //consuming the first byte (d)
-    buf_reader.consume(1);
-
-    let mut current_key: Option<TorrentKeys> = None;
 
     loop {
         let next_type = extract_next_type(buf_reader);
 
         if next_type.is_none() {
+            panic!("reached EOF");
+        }
+
+        match next_type.unwrap() {
+            BencodeType::Terminator => {
+                consume_next_byte(buf_reader);
+                break;
+            }
+            _ => {}
+        }
+
+        let data_size = get_incoming_string_length(buf_reader).unwrap();
+
+        let mut data = vec![0u8; data_size];
+
+        buf_reader.read_exact(&mut data).unwrap();
+
+        strings.push(String::from_utf8(data).unwrap());
+    }
+
+    return strings;
+}
+
+pub fn decode_dictionary<P: BencodeParsable + Debug>(
+    target: &mut P,
+    buf_reader: &mut BufReader<P::R>,
+) where
+    P::Key: Debug + Clone,
+{
+    //consuming the first byte (d)
+    consume_next_byte(buf_reader);
+
+    let mut current_key: Option<P::Key> = None;
+
+    loop {
+        let next_type = extract_next_type(buf_reader);
+
+        if next_type.is_none() {
+            //EOF
             break;
         }
 
         let next_type = next_type.unwrap();
 
         if next_type == BencodeType::Terminator {
-            if is_info_dictionnary {
-                end_info_index = buf_reader.stream_position().unwrap();
-            }
-
-            buf_reader.consume(1);
+            consume_next_byte(buf_reader);
             break;
         }
 
@@ -331,91 +271,70 @@ fn decode_dictionary_field(
         }
 
         if current_key.is_none() {
-            current_key = Some(decode_next_torrent_key(buf_reader));
+            current_key = Some(P::key_from_str(
+                str::from_utf8(decode_bytes(buf_reader).as_slice()).unwrap(),
+            ));
+            println!("New key: {:?}", current_key);
             continue;
         }
 
-        let current_torrent_key = current_key.unwrap();
+        let unwrapped_current_key = current_key.unwrap();
 
         match next_type {
             BencodeType::String => {
-                if current_torrent_key.is_binary_field() {
-                    handle_binary_field(torrent_file, buf_reader, current_torrent_key);
-                } else {
-                    handle_string_field(torrent_file, buf_reader, current_torrent_key);
-                }
+                //in reality BencodeType::String work for both string & raw bytes
+
+                let decoded_bytes = decode_bytes(buf_reader);
+                target.on_string_or_bytes(unwrapped_current_key.clone(), decoded_bytes);
             }
             BencodeType::Integer => {
-                handle_integer_field(torrent_file, buf_reader, current_torrent_key);
+                let decoded_integer = decode_integer(buf_reader);
+                target.on_integer(unwrapped_current_key.clone(), decoded_integer);
             }
             BencodeType::Dictionary => {
-                decode_dictionary_field(torrent_file, buf_reader, Some(current_torrent_key));
+                target.on_dictionary(unwrapped_current_key.clone(), buf_reader);
             }
             BencodeType::List => {
-                if current_torrent_key == TorrentKeys::AnnounceList {
-                    handle_announce_list(torrent_file, buf_reader);
-                } else {
-                    handle_string_list_field(torrent_file, buf_reader, current_torrent_key);
+                if unwrapped_current_key.is_list_of_strings() {
+                    consume_next_byte(buf_reader); //consuming 1st l character
+                    let strings = decode_list_string(buf_reader);
+                    target.on_list_string(unwrapped_current_key.clone(), strings);
+                } else if unwrapped_current_key.is_nested_list_string() {
+                    let mut nested_strings = Vec::<Vec<String>>::new();
+
+                    consume_next_byte(buf_reader); //consuming 1st l character
+
+                    loop {
+                        let next_type = extract_next_type(buf_reader).unwrap();
+                        match next_type {
+                            BencodeType::List => {
+                                consume_next_byte(buf_reader);
+                                let strings = decode_list_string(buf_reader);
+                                nested_strings.push(strings);
+                            }
+                            BencodeType::Terminator => {
+                                consume_next_byte(buf_reader);
+                                break;
+                            }
+                            _ => panic!("received type {:?} in nested list string", next_type),
+                        }
+                    }
+
+                    target.on_nested_list_string(unwrapped_current_key.clone(), nested_strings);
                 }
             }
-            BencodeType::Terminator => {}
+            BencodeType::Terminator => {
+                consume_next_byte(buf_reader);
+                return;
+            }
         };
 
+        println!("{:?}\n\n", target);
+        println!("Deleting current key: {:?}\n", unwrapped_current_key);
         current_key = None;
     }
 
-    //a little bit archaic but good enough for now.
-    let mut handle_info_bytes = || {
-        let info_data_length: usize = (end_info_index - start_info_index + 1).try_into().unwrap();
-        let current_pos = buf_reader.stream_position().unwrap();
-        let mut info_raw_bytes = vec![0u8; info_data_length];
-        let mut hasher = Sha1::new();
-
-        buf_reader.seek(SeekFrom::Start(start_info_index)).unwrap();
-        buf_reader.read_exact(&mut info_raw_bytes).unwrap();
-        buf_reader.seek(SeekFrom::Start(current_pos)).unwrap();
-
-        hasher.update(&info_raw_bytes);
-
-        torrent_file.info_hash = hasher.finalize().into();
-    };
-
-    if start_info_index > 0 && end_info_index > 0 {
-        handle_info_bytes();
-    }
+    println!("{:?}\n\n", target);
 
     return;
-}
-
-pub fn parse_torrent_file(file: File) -> Result<TorrentFile, String> {
-    let mut torrent_file = TorrentFile::default();
-    let mut buf_reader = BufReader::new(file);
-    let next_type_res = extract_next_type(&mut buf_reader);
-
-    if next_type_res.is_none() {
-        return Err(format!("file is empty"));
-    }
-
-    let next_type = next_type_res.unwrap();
-
-    if next_type != BencodeType::Dictionary {
-        return Err(format!("file must start with a bencode dictionary"));
-    }
-
-    decode_dictionary_field(&mut torrent_file, &mut buf_reader, None);
-
-    let current_pos = buf_reader.seek(SeekFrom::Current(0)).unwrap();
-    let end = buf_reader.seek(SeekFrom::End(0)).unwrap();
-    let remaining_bytes = end - current_pos;
-
-    if remaining_bytes != 0 {
-        panic!(
-            "done parsing but some bytes havent been read: {}",
-            remaining_bytes
-        );
-    }
-
-    println!("Torrent file: {:?}\n", torrent_file);
-    println!("info hash: {}", hex::encode(torrent_file.info_hash));
-    return Ok(torrent_file);
 }

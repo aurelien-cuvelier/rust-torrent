@@ -5,4 +5,6 @@ edition = "2024"
 
 [dependencies]
 hex = "0.4.3"
+reqwest = { version = "0.13.1", features = ["blocking"] }
 sha1 = "0.10.6"
+urlencoding = "2.1.3"

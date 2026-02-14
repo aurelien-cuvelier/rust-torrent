@@ -1,6 +1,6 @@
 use std::{env::args, fs::File, process};
 
-use rust_torrent::bencode;
+use rust_torrent::torrent_file::TorrentFile;
 
 fn main() {
     let args: Vec<String> = args().collect();
@@ -20,6 +20,7 @@ fn main() {
     }
 
     let file = file_res.unwrap();
+    let _torrent = TorrentFile::from(file);
 
-    _ = bencode::parse_torrent_file(file)
+    //torrent_net::get_announce(torrent);
 }
