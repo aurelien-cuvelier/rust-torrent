@@ -1,11 +1,44 @@
 use reqwest;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use urlencoding::encode_binary;
 
 use crate::client;
 use crate::torrent_file::TorrentFile;
 use crate::tracker_data::TrackerData;
+
+#[derive(Debug)]
+enum MessageType {
+    //https://wiki.theory.org/BitTorrentSpecification
+    Choke = 0,         // (choke): Peer notifies that it will not send data.
+    Unchoke = 1,       // (unchoke): Peer notifies that it will send data.
+    Interested = 2,    // (interested): Peer expresses interest in obtaining data.
+    NotInterested = 3, // (not interested): Peer expresses no interest in data.
+    Have = 4,          // (have): Tells peers that a piece has been downloaded.
+    Bitfield = 5, // (bitfield): Sent immediately after handshake to show all pieces a peer has.
+    Request = 6,  // (request): Requests a block of data.
+    Piece = 7,    // (piece): Delivers a block of data.
+    Cancel = 8,   // (cancel): Cancels a previously sent request.
+    Port = 9,     // (port): Used for DHT tracker connectivity.
+}
+
+impl MessageType {
+    fn from_byte(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Choke),
+            1 => Some(Self::Unchoke),
+            2 => Some(Self::Interested),
+            3 => Some(Self::NotInterested),
+            4 => Some(Self::Have),
+            5 => Some(Self::Bitfield),
+            6 => Some(Self::Request),
+            7 => Some(Self::Piece),
+            8 => Some(Self::Cancel),
+            9 => Some(Self::Port),
+            _ => None,
+        }
+    }
+}
 
 pub fn get_announce(torrent_file: TorrentFile) {
     println!("Announcing to tracker...");
@@ -77,22 +110,75 @@ pub fn connect_to_peer(torrent_file: &TorrentFile, peer: &str) {
     );
     stream.write_all(&handshake_data).unwrap();
 
-    let mut response = [0u8; 68];
-    stream.read_exact(&mut response).unwrap();
+    let mut handshake_response = [0u8; 68];
+    stream.read_exact(&mut handshake_response).unwrap();
 
     println!(
         "\n\nreceived handshake response: {:?}",
-        String::from_utf8_lossy(&response)
+        String::from_utf8_lossy(&handshake_response)
     );
 
-    let peer_id = &response[48..68];
-    let info_hash = &response[28..48];
+    let peer_id = &handshake_response[48..68];
+    let info_hash = &handshake_response[28..48];
+
+    let info_hash_match = torrent_file.info_hash.eq(info_hash);
 
     println!(
         "\n\n{peer} - {}\ninfo hash match: {}",
         String::from_utf8(peer_id.to_vec()).unwrap(),
-        torrent_file.info_hash.eq(info_hash)
+        info_hash_match
     );
+
+    loop {
+        //4 first bytes is the payload length
+        let mut payload_length_raw = [0u8; 4];
+        match stream.read_exact(&mut payload_length_raw) {
+            Ok(()) => {}
+            Err(e) => {
+                if e.kind() == ErrorKind::UnexpectedEof {
+                    eprintln!("stream read OEF -> peer closed the connection");
+                } else {
+                    eprintln!("stream read error: {}", e);
+                }
+                break;
+            }
+        }
+
+        let payload_length = u32::from_be_bytes(payload_length_raw);
+
+        if payload_length == 0 {
+            println!("received 0 length msg (keep-alive)");
+            continue;
+        }
+
+        let mut full_payload = vec![0u8; payload_length.try_into().unwrap()];
+        stream.read_exact(&mut full_payload).unwrap();
+
+        let msg_id = full_payload[0];
+
+        let msg_type = match MessageType::from_byte(msg_id) {
+            None => {
+                println!("unknown message type: {}", msg_id);
+                continue;
+            }
+            Some(m) => m,
+        };
+
+        println!("received message type: {:?}", msg_type);
+
+        match msg_type {
+            MessageType::Choke => {}
+            MessageType::Unchoke => {}
+            MessageType::Interested => {}
+            MessageType::NotInterested => {}
+            MessageType::Have => {}
+            MessageType::Bitfield => {}
+            MessageType::Request => {}
+            MessageType::Piece => {}
+            MessageType::Cancel => {}
+            MessageType::Port => {}
+        }
+    }
 
     stream.shutdown(Shutdown::Both).unwrap();
 }
