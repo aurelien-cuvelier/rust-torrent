@@ -1,3 +1,4 @@
+use log::{debug, error, info, warn};
 use reqwest;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpStream};
@@ -103,8 +104,8 @@ pub fn connect_to_peer(torrent_file: &TorrentFile, peer: &str) {
     let mut stream = TcpStream::connect(peer).unwrap();
 
     let handshake_data = get_handshake_data(&torrent_file.info_hash);
-    println!(
-        "\n\nsending handshake to {} data {:?}",
+    info!(
+        "sending handshake to {} data {:?}",
         peer,
         String::from_utf8_lossy(&handshake_data)
     );
@@ -113,8 +114,8 @@ pub fn connect_to_peer(torrent_file: &TorrentFile, peer: &str) {
     let mut handshake_response = [0u8; 68];
     stream.read_exact(&mut handshake_response).unwrap();
 
-    println!(
-        "\n\nreceived handshake response: {:?}",
+    info!(
+        "received handshake response: {:?}",
         String::from_utf8_lossy(&handshake_response)
     );
 
@@ -123,8 +124,8 @@ pub fn connect_to_peer(torrent_file: &TorrentFile, peer: &str) {
 
     let info_hash_match = torrent_file.info_hash.eq(info_hash);
 
-    println!(
-        "\n\n{peer} - {}\ninfo hash match: {}",
+    info!(
+        "{peer} - {}\ninfo hash match: {}",
         String::from_utf8(peer_id.to_vec()).unwrap(),
         info_hash_match
     );
@@ -136,9 +137,9 @@ pub fn connect_to_peer(torrent_file: &TorrentFile, peer: &str) {
             Ok(()) => {}
             Err(e) => {
                 if e.kind() == ErrorKind::UnexpectedEof {
-                    eprintln!("stream read OEF -> peer closed the connection");
+                    info!("peer closed the connection");
                 } else {
-                    eprintln!("stream read error: {}", e);
+                    error!("stream read error: {}", e);
                 }
                 break;
             }
@@ -147,7 +148,7 @@ pub fn connect_to_peer(torrent_file: &TorrentFile, peer: &str) {
         let payload_length = u32::from_be_bytes(payload_length_raw);
 
         if payload_length == 0 {
-            println!("received 0 length msg (keep-alive)");
+            debug!("received keep-alive");
             continue;
         }
 
@@ -158,13 +159,13 @@ pub fn connect_to_peer(torrent_file: &TorrentFile, peer: &str) {
 
         let msg_type = match MessageType::from_byte(msg_id) {
             None => {
-                println!("unknown message type: {}", msg_id);
+                warn!("unknown message type: {}", msg_id);
                 continue;
             }
             Some(m) => m,
         };
 
-        println!("received message type: {:?}", msg_type);
+        debug!("received message type: {:?}", msg_type);
 
         match msg_type {
             MessageType::Choke => {}

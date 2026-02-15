@@ -1,8 +1,13 @@
 use std::{env::args, fs::File, process};
 
+use dotenvy;
+use log::error;
 use rust_torrent::{torrent_file::TorrentFile, torrent_net};
 
 fn main() {
+    dotenvy::dotenv().unwrap();
+    env_logger::init();
+
     let args: Vec<String> = args().collect();
 
     if args.len() != 2 {
@@ -15,7 +20,7 @@ fn main() {
 
     if file_res.is_err() {
         let err = file_res.unwrap_err();
-        println!("Error opening file {}: {}", file_name, err);
+        error!("Error opening file {}: {}", file_name, err);
         process::exit(1);
     }
 

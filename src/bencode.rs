@@ -333,7 +333,7 @@ pub fn decode_dictionary<P: BencodeParsable + Debug>(
             }
         };
 
-        println!("{:?}\n\n", target);
+        //println!("{:?}\n\n", target);
         println!("Deleting current key: {:?}\n", unwrapped_current_key);
         current_key = None;
     }
