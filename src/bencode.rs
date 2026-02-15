@@ -290,10 +290,10 @@ pub fn decode_dictionary<P: BencodeParsable + Debug>(
         }
 
         if current_key.is_none() {
-            current_key = Some(P::key_from_str(
-                str::from_utf8(decode_bytes(buf_reader).as_slice()).unwrap(),
-            ));
-            println!("New key: {:?}", current_key);
+            let decoded_bytes_vec = decode_bytes(buf_reader);
+            let raw_str_key = str::from_utf8(decoded_bytes_vec.as_slice()).unwrap();
+            current_key = Some(P::key_from_str(raw_str_key));
+            println!("New key: {:?} | str: {}", current_key, raw_str_key);
             continue;
         }
 

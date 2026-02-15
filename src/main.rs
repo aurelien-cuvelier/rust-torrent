@@ -1,6 +1,6 @@
 use std::{env::args, fs::File, process};
 
-use rust_torrent::torrent_file::TorrentFile;
+use rust_torrent::{torrent_file::TorrentFile, torrent_net};
 
 fn main() {
     let args: Vec<String> = args().collect();
@@ -20,7 +20,7 @@ fn main() {
     }
 
     let file = file_res.unwrap();
-    let _torrent = TorrentFile::from(file);
+    let torrent = TorrentFile::from(file);
 
-    //torrent_net::get_announce(torrent);
+    torrent_net::get_announce(torrent);
 }

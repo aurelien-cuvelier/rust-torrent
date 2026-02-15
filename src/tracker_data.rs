@@ -8,6 +8,9 @@ pub struct TrackerData {
     // pub complete: Option<u64>,
     // pub incomplete: Option<u64>,
     pub peers: Vec<u8>,
+
+    //converted ip:port format
+    pub peers_str: Vec<String>,
     // pub failure_reason: Option<String>,
     // pub warning_message: Option<String>,
     // pub min_interval: Option<u64>,
@@ -78,6 +81,36 @@ impl BencodeParsable for TrackerData {
             _ => {}
         }
     }
+
+    fn on_string_or_bytes(&mut self, key: Self::Key, value: Vec<u8>) {
+        if key.is_binary_field() {
+            match key {
+                Self::Key::Peers => {
+                    self.peers = value;
+                    self.on_peers_updated();
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl TrackerData {
+    fn on_peers_updated(&mut self) {
+        self.peers_str = self
+            .peers
+            .chunks_exact(6)
+            .map(|chunk| {
+                //Parsing raw peers to string. 1 byte for each part of ip address + 2 bytes for port
+                let port = u16::from_be_bytes(chunk[4..6].try_into().unwrap());
+
+                format!(
+                    "{}.{}.{}.{}:{}",
+                    chunk[0], chunk[1], chunk[2], chunk[3], port
+                )
+            })
+            .collect();
+    }
 }
 
 impl Default for TrackerData {
@@ -87,6 +120,7 @@ impl Default for TrackerData {
             // complete: None,
             // incomplete: None,
             peers: Vec::<u8>::new(),
+            peers_str: Vec::<String>::new(),
             // failure_reason: None,
             // warning_message: None,
             // min_interval: None,

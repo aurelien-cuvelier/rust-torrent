@@ -32,7 +32,10 @@ pub fn get_announce(torrent_file: TorrentFile) {
 
     let body = res_data.bytes().unwrap();
 
-    println!("{:?}", body.clone());
+    println!(
+        "{:?}",
+        String::from_utf8_lossy(body.clone().to_vec().as_slice())
+    );
 
     let tracker_data = TrackerData::from(Vec::from(body));
 
