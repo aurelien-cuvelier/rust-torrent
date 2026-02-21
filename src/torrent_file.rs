@@ -78,6 +78,7 @@ pub struct TorrentFile {
     //not part of the actual torrent BEP impl, but convenient to keep it here
     pub info_hash: [u8; 20],
     pub info_hash_str: String,
+    pub pieces_amount: usize,
 }
 
 impl Default for TorrentFile {
@@ -102,6 +103,7 @@ impl Default for TorrentFile {
 
             info_hash: [0u8; 20],
             info_hash_str: String::new(),
+            pieces_amount: 0,
         }
     }
 }
@@ -346,6 +348,8 @@ impl BencodeParsable for TorrentFile {
 
                 self.info_hash = hasher.finalize().try_into().unwrap();
                 self.info_hash_str = hex::encode(self.info_hash);
+
+                self.pieces_amount = self.info.length.div_ceil(self.info.piece_length);
             }
             _ => {
                 decode_dictionary(&mut self.info, buf_reader);
