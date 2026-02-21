@@ -1,15 +1,13 @@
-use log::{debug, error, info, warn};
 use reqwest;
-use std::io::{ErrorKind, Read, Write};
-use std::net::{Shutdown, TcpStream};
 use urlencoding::encode_binary;
 
 use crate::client;
+use crate::connection_handler::ConnectionHandler;
 use crate::torrent_file::TorrentFile;
 use crate::tracker_data::TrackerData;
 
 #[derive(Debug)]
-enum MessageType {
+pub enum MessageType {
     //https://wiki.theory.org/BitTorrentSpecification
     Choke = 0,         // (choke): Peer notifies that it will not send data.
     Unchoke = 1,       // (unchoke): Peer notifies that it will send data.
@@ -24,7 +22,7 @@ enum MessageType {
 }
 
 impl MessageType {
-    fn from_byte(value: u8) -> Option<Self> {
+    pub fn from_byte(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Choke),
             1 => Some(Self::Unchoke),
@@ -41,7 +39,7 @@ impl MessageType {
     }
 }
 
-pub fn get_announce(torrent_file: TorrentFile) {
+pub fn get_tracker_data(torrent_file: &TorrentFile) -> Result<TrackerData, String> {
     println!("Announcing to tracker...");
     let req = format!(
         "{}?info_hash={}&peer_id={}&port={}&uploaded={}&downloaded={}&left={}&event={}&compact=1",
@@ -58,8 +56,7 @@ pub fn get_announce(torrent_file: TorrentFile) {
     let res = reqwest::blocking::get(req);
 
     if res.is_err() {
-        println!("server answered with error: {:#?}", res.unwrap_err());
-        return;
+        return Err(format!("server answered with: {:?}", res.unwrap_err()));
     }
 
     let res_data = res.unwrap();
@@ -75,12 +72,10 @@ pub fn get_announce(torrent_file: TorrentFile) {
 
     let tracker_data = TrackerData::from(Vec::from(body));
 
-    println!("{:?}", tracker_data);
-
-    connect_to_peer(&torrent_file, &tracker_data.peers_str[0]);
+    return Ok(tracker_data);
 }
 
-fn get_handshake_data(info_hash: &[u8; 20]) -> [u8; 68] {
+pub fn get_handshake_data(info_hash: &[u8; 20]) -> [u8; 68] {
     /*
     * Bytes	Content
         1	Protocol string length = 19
@@ -99,87 +94,23 @@ fn get_handshake_data(info_hash: &[u8; 20]) -> [u8; 68] {
     return buf;
 }
 
-pub fn connect_to_peer(torrent_file: &TorrentFile, peer: &str) {
-    //handshakes are 68 bytes long
-    let mut stream = TcpStream::connect(peer).unwrap();
+pub fn get_connections_handler<'a>(
+    tracker_data: &'a TrackerData,
+    max_peers: Option<usize>,
+) -> Vec<ConnectionHandler<'a>> {
+    let mut connections = Vec::<ConnectionHandler<'a>>::new();
+    let max_peers = match max_peers {
+        Some(max) => max,
+        _ => 4,
+    };
 
-    let handshake_data = get_handshake_data(&torrent_file.info_hash);
-    info!(
-        "sending handshake to {} data {:?}",
-        peer,
-        String::from_utf8_lossy(&handshake_data)
-    );
-    stream.write_all(&handshake_data).unwrap();
-
-    let mut handshake_response = [0u8; 68];
-    stream.read_exact(&mut handshake_response).unwrap();
-
-    info!(
-        "received handshake response: {:?}",
-        String::from_utf8_lossy(&handshake_response)
-    );
-
-    let peer_id = &handshake_response[48..68];
-    let info_hash = &handshake_response[28..48];
-
-    let info_hash_match = torrent_file.info_hash.eq(info_hash);
-
-    info!(
-        "{peer} - {}\ninfo hash match: {}",
-        String::from_utf8(peer_id.to_vec()).unwrap(),
-        info_hash_match
-    );
-
-    loop {
-        //4 first bytes is the payload length
-        let mut payload_length_raw = [0u8; 4];
-        match stream.read_exact(&mut payload_length_raw) {
-            Ok(()) => {}
-            Err(e) => {
-                if e.kind() == ErrorKind::UnexpectedEof {
-                    info!("peer closed the connection");
-                } else {
-                    error!("stream read error: {}", e);
-                }
-                break;
-            }
+    for (peer_index, peer) in tracker_data.peers_str.iter().enumerate() {
+        if peer_index >= max_peers {
+            break;
         }
 
-        let payload_length = u32::from_be_bytes(payload_length_raw);
-
-        if payload_length == 0 {
-            debug!("received keep-alive");
-            continue;
-        }
-
-        let mut full_payload = vec![0u8; payload_length.try_into().unwrap()];
-        stream.read_exact(&mut full_payload).unwrap();
-
-        let msg_id = full_payload[0];
-
-        let msg_type = match MessageType::from_byte(msg_id) {
-            None => {
-                warn!("unknown message type: {}", msg_id);
-                continue;
-            }
-            Some(m) => m,
-        };
-
-        debug!("received message type: {:?}", msg_type);
-
-        match msg_type {
-            MessageType::Choke => {}
-            MessageType::Unchoke => {}
-            MessageType::Interested => {}
-            MessageType::NotInterested => {}
-            MessageType::Have => {}
-            MessageType::Bitfield => {}
-            MessageType::Request => {}
-            MessageType::Piece => {}
-            MessageType::Cancel => {}
-            MessageType::Port => {}
-        }
+        connections.push(ConnectionHandler::new(peer));
     }
 
-    stream.shutdown(Shutdown::Both).unwrap();
+    return connections;
 }

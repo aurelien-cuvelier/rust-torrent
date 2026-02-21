@@ -1,8 +1,8 @@
 use std::{env::args, fs::File, process};
 
 use dotenvy;
-use log::error;
-use rust_torrent::{torrent_file::TorrentFile, torrent_net};
+use log::{error, info};
+use rust_torrent::{file_download, torrent_file::TorrentFile, torrent_net};
 
 fn main() {
     dotenvy::dotenv().unwrap();
@@ -27,5 +27,23 @@ fn main() {
     let file = file_res.unwrap();
     let torrent = TorrentFile::from(file);
 
-    torrent_net::get_announce(torrent);
+    let res_tracker_data = torrent_net::get_tracker_data(&torrent);
+
+    if res_tracker_data.is_err() {
+        error!(
+            "error getting tracker data: {}",
+            res_tracker_data.unwrap_err()
+        );
+        process::exit(1)
+    }
+
+    let tracker_data = res_tracker_data.unwrap();
+
+    info!("{:?}", tracker_data);
+
+    file_download::get_file_handlder(&torrent, &tracker_data);
+
+    torrent_net::get_connections_handler(&tracker_data, Some(1));
+
+    println!("END");
 }
