@@ -29,7 +29,13 @@ impl<'a> ConnectionHandler<'a> {
         //handshakes are 68 bytes long
 
         info!("Connection to {peer}");
-        let mut stream = TcpStream::connect(peer).unwrap();
+        let mut stream = match TcpStream::connect(peer) {
+            Ok(stream) => stream,
+            Err(e) => {
+                error!("Could not initiate TCP connection with {peer} {}", e);
+                return;
+            }
+        };
 
         let handshake_data = get_handshake_data(&torrent_file.info_hash);
         info!(
@@ -39,7 +45,16 @@ impl<'a> ConnectionHandler<'a> {
         stream.write_all(&handshake_data).unwrap();
 
         let mut handshake_response = [0u8; 68];
-        stream.read(&mut handshake_response).unwrap();
+        let received_data = stream.read(&mut handshake_response);
+
+        if received_data.is_err() {
+            error!(
+                "peer {} closed connection {}",
+                peer,
+                received_data.unwrap_err()
+            );
+            return;
+        }
 
         info!(
             "{peer} => received handshake response: {:?}",

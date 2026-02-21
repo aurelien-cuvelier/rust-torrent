@@ -43,7 +43,7 @@ fn main() {
 
     file_download::get_file_handlder(&torrent, &tracker_data);
 
-    torrent_net::get_connections_handler(&tracker_data, Some(1));
+    torrent_net::get_connections_handler(&torrent, &tracker_data, Some(1));
 
     println!("END");
 }

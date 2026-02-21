@@ -95,6 +95,7 @@ pub fn get_handshake_data(info_hash: &[u8; 20]) -> [u8; 68] {
 }
 
 pub fn get_connections_handler<'a>(
+    torrent_file: &TorrentFile,
     tracker_data: &'a TrackerData,
     max_peers: Option<usize>,
 ) -> Vec<ConnectionHandler<'a>> {
@@ -109,7 +110,9 @@ pub fn get_connections_handler<'a>(
             break;
         }
 
-        connections.push(ConnectionHandler::new(peer));
+        let mut connection_handler = ConnectionHandler::new(peer);
+        connection_handler.connect(torrent_file, peer);
+        connections.push(connection_handler);
     }
 
     return connections;
