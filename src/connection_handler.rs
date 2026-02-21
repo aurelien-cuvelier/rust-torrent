@@ -1,5 +1,5 @@
 use std::io::{ErrorKind, Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::TcpStream;
 
 use log::{debug, error, info, warn};
 
@@ -37,6 +37,8 @@ impl<'a> ConnectionHandler<'a> {
             }
         };
 
+        self.connected = true;
+
         let handshake_data = get_handshake_data(&torrent_file.info_hash);
         info!(
             "{peer} => sending handshake data {:?}",
@@ -53,6 +55,7 @@ impl<'a> ConnectionHandler<'a> {
                 peer,
                 received_data.unwrap_err()
             );
+            self.connected = false;
             return;
         }
 
@@ -83,7 +86,7 @@ impl<'a> ConnectionHandler<'a> {
                     } else {
                         error!("{peer} => stream read error: {}", e);
                     }
-                    break;
+                    return;
                 }
             }
 
@@ -133,6 +136,7 @@ impl<'a> ConnectionHandler<'a> {
             }
         }
 
-        stream.shutdown(Shutdown::Both).unwrap();
+        //we need to close connection when we got all the pieces
+        //stream.shutdown(Shutdown::Both).unwrap();
     }
 }

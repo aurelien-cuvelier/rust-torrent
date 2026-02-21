@@ -12,7 +12,7 @@ use hex;
 pub struct FileHandler {
     pub file: fs::File,
     pub bitfield: Vec<u8>,
-    pub has_missing_parts: bool,
+    pub needed_pieces: Vec<usize>,
 }
 
 fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> Vec<u8> {
@@ -91,10 +91,42 @@ pub fn get_file_handlder(torrent_file: &TorrentFile, _tracker_data: &TrackerData
     }
 
     let bitfield = get_local_file_bitfield(&mut handler, torrent_file);
+    let total_pieces = torrent_file
+        .info
+        .length
+        .div_ceil(torrent_file.info.piece_length);
+
+    println!("total pieces: {total_pieces}");
+
+    let needed_pieces =
+        bitfield
+            .iter()
+            .enumerate()
+            .fold(Vec::new(), |mut acc, (index, pieces_bits)| {
+                for shift in 0..=7 {
+                    let piece_index = index * 8 + shift;
+                    if piece_index >= total_pieces {
+                        break;
+                    }
+                    /*
+                     * We shift left all the 8 pieces from the byte and apply
+                     * a mask cancelling all bits except the MSB. If the resulting
+                     * number is 0 then we need that piece, anything else than 0 is not needed.
+                     */
+                    let piece_is_needed = (pieces_bits << shift) & 0b10000000 == 0;
+
+                    if piece_is_needed {
+                        acc.push(piece_index);
+                    }
+                    println!("piece {} | needed: {piece_is_needed}", index * 8 + shift);
+                }
+
+                return acc;
+            });
 
     FileHandler {
         file: handler,
         bitfield,
-        has_missing_parts: true,
+        needed_pieces,
     }
 }
