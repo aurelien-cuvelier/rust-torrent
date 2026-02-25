@@ -3,7 +3,7 @@ use urlencoding::encode_binary;
 
 use crate::client;
 use crate::connection_handler::ConnectionHandler;
-use crate::file_download::FileHandler;
+use crate::file_handler::FileHandler;
 use crate::torrent_file::TorrentFile;
 use crate::tracker_data::TrackerData;
 

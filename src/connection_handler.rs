@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use log::{debug, error, info, warn};
 use sha1::{Digest, Sha1};
 
-use crate::file_download::FileHandler;
+use crate::file_handler::FileHandler;
 use crate::torrent_file::TorrentFile;
 use crate::torrent_net::{MessageType, get_handshake_data};
 
@@ -18,6 +18,12 @@ struct Piece {
     data: Vec<u8>,
     received_offsets: HashSet<u32>,
     missing_data: usize,
+}
+
+#[derive(Debug)]
+struct Message {
+    msg_type: Option<MessageType>, //None for keep-alive msg as they have 0 length
+    data: Vec<u8>,
 }
 
 pub struct ConnectionHandler<'a> {
@@ -64,8 +70,18 @@ impl<'a> ConnectionHandler<'a> {
         debug!("[{}] {}", self.peer, msg);
     }
 
-    fn log_warn(&self, msg: &str) {
+    fn _log_warn(&self, msg: &str) {
         warn!("[{}] {}", self.peer, msg);
+    }
+
+    fn log_payload(&self, data: &[u8]) {
+        if data.len() < 100 {
+            self.log_debug(format!("payload: {:?}", data).as_str());
+        } else {
+            self.log_debug(
+                format!("payload: {:?}...{} elements", &data[0..100], data.len()).as_str(),
+            );
+        }
     }
 
     fn start_new_piece(&mut self, piece_index: u32) {
@@ -271,7 +287,7 @@ impl<'a> ConnectionHandler<'a> {
 
         if hashes_match {
             self.file_handler.write_piece_to_file(
-                (piece_index as usize * self.torrent_file.info.piece_length),
+                piece_index as usize * self.torrent_file.info.piece_length,
                 &current_piece.data,
             );
         }
@@ -344,55 +360,67 @@ impl<'a> ConnectionHandler<'a> {
         //stream.shutdown(Shutdown::Both).unwrap();
     }
 
-    fn handle_new_messages(&mut self) {
-        loop {
-            //4 first bytes is the payload length
-            let mut payload_length_raw = [0u8; 4];
-            match self.stream_mut().read_exact(&mut payload_length_raw) {
-                Ok(()) => {}
-                Err(e) => {
-                    if e.kind() == ErrorKind::UnexpectedEof {
-                        self.log_info("peer closed the connection");
-                    } else {
-                        self.log_info(format!("stream read error: {}", e).as_str());
-                    }
-                    return;
+    fn await_next_msg(&mut self) -> Result<Message, String> {
+        //4 first bytes is the payload length
+        let mut payload_length_raw = [0u8; 4];
+        match self.stream_mut().read_exact(&mut payload_length_raw) {
+            Ok(()) => {}
+            Err(e) => {
+                if e.kind() == ErrorKind::UnexpectedEof {
+                    return Err(String::from("peer closed the connection"));
+                } else {
+                    return Err(format!("stream read error: {}", e));
                 }
             }
+        }
 
-            let payload_length = u32::from_be_bytes(payload_length_raw);
+        let payload_length = u32::from_be_bytes(payload_length_raw);
 
-            if payload_length == 0 {
-                self.log_debug("received keep-alive");
+        if payload_length == 0 {
+            self.log_debug("received keep-alive");
+            return Ok(Message {
+                msg_type: None,
+                data: Vec::new(),
+            });
+        }
+
+        let mut full_payload = vec![0u8; payload_length as usize];
+        self.stream_mut().read_exact(&mut full_payload).unwrap();
+
+        let msg_id = full_payload[0];
+
+        let msg_type = match MessageType::from_byte(msg_id) {
+            None => {
+                return Err(format!("unknown message type: {}", msg_id));
+            }
+            Some(m) => m,
+        };
+
+        return Ok(Message {
+            msg_type: Some(msg_type),
+            data: full_payload,
+        });
+    }
+
+    fn handle_new_messages(&mut self) {
+        loop {
+            let new_msg = self.await_next_msg();
+
+            if new_msg.is_err() {
+                self.log_err(format!("{}", new_msg.unwrap_err()).as_str());
+                return;
+            }
+
+            let new_msg = new_msg.unwrap();
+
+            if new_msg.data.len() == 0 {
+                self.log_info("received keep-alive msg");
                 continue;
             }
 
-            let mut full_payload = vec![0u8; payload_length as usize];
-            self.stream_mut().read_exact(&mut full_payload).unwrap();
-
-            let msg_id = full_payload[0];
-
-            let msg_type = match MessageType::from_byte(msg_id) {
-                None => {
-                    self.log_warn(format!("unknown message type: {}", msg_id).as_str());
-                    continue;
-                }
-                Some(m) => m,
-            };
-
+            let msg_type = new_msg.msg_type.unwrap();
             self.log_debug(format!("received message type: {:?}", msg_type).as_str());
-            if full_payload.len() < 100 {
-                self.log_debug(format!("payload: {:?}", full_payload).as_str());
-            } else {
-                self.log_debug(
-                    format!(
-                        "payload: {:?}...{} elements",
-                        &full_payload[0..100],
-                        full_payload.len()
-                    )
-                    .as_str(),
-                );
-            }
+            self.log_payload(&new_msg.data);
 
             match msg_type {
                 MessageType::Choke => self.unchoked = false,
@@ -403,7 +431,7 @@ impl<'a> ConnectionHandler<'a> {
                 MessageType::Have => {}
                 MessageType::Bitfield => {
                     //let bitfield = &full_payload[1..];
-                    let bit_field = full_payload[1..].to_vec();
+                    let bit_field = new_msg.data[1..].to_vec();
                     let required_bitfield_length = self.torrent_file.pieces_amount.div_ceil(8);
                     if bit_field.len() != required_bitfield_length {
                         self.log_err(
@@ -422,28 +450,36 @@ impl<'a> ConnectionHandler<'a> {
                 }
                 MessageType::Request => {}
                 MessageType::Piece => {
-                    let truncated_payload = &full_payload[1..];
+                    let truncated_payload = &new_msg.data[1..];
                     self.handle_new_piece(truncated_payload);
                 }
                 MessageType::Cancel => {}
                 MessageType::Port => {}
             }
 
+            if self.file_handler.needed_pieces.len() == 0 {
+                self.log_info("closing connection has no piece left");
+                break;
+            }
+
             if self.connected
                 && self.unchoked
                 && self.bitfield.is_some()
                 && self.current_piece.is_none()
+                && self.file_handler.needed_pieces.len() > 0
             {
                 self.download_next_piece();
             }
         }
+
+        //we don't unwrap because it will panic if already closed
+        let _ = self.stream_mut().shutdown(std::net::Shutdown::Both);
     }
 
     pub fn download_next_piece(&mut self) {
         let next_needed_piece = match self.file_handler.needed_pieces.pop_front() {
             Some(piece) => piece,
             _ => {
-                self.log_info("closing connection has no piece left");
                 return;
             }
         };

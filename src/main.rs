@@ -2,7 +2,7 @@ use std::{env::args, fs::File, process};
 
 use dotenvy;
 use log::{error, info};
-use rust_torrent::{file_download, torrent_file::TorrentFile, torrent_net};
+use rust_torrent::{file_handler, torrent_file::TorrentFile, torrent_net};
 
 fn main() {
     dotenvy::dotenv().unwrap();
@@ -41,7 +41,7 @@ fn main() {
 
     info!("{:?}", tracker_data);
 
-    let mut file_handler = file_download::get_file_handlder(&torrent, &tracker_data);
+    let mut file_handler = file_handler::get_file_handlder(&torrent, &tracker_data);
 
     torrent_net::get_connections_handler(&torrent, &tracker_data, &mut file_handler, Some(1));
 
