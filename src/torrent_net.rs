@@ -3,6 +3,7 @@ use urlencoding::encode_binary;
 
 use crate::client;
 use crate::connection_handler::ConnectionHandler;
+use crate::file_download::FileHandler;
 use crate::torrent_file::TorrentFile;
 use crate::tracker_data::TrackerData;
 
@@ -35,6 +36,21 @@ impl MessageType {
             8 => Some(Self::Cancel),
             9 => Some(Self::Port),
             _ => None,
+        }
+    }
+
+    pub fn to_byte(&self) -> u8 {
+        match self {
+            Self::Choke => 0,
+            Self::Unchoke => 1,
+            Self::Interested => 2,
+            Self::NotInterested => 3,
+            Self::Have => 4,
+            Self::Bitfield => 5,
+            Self::Request => 6,
+            Self::Piece => 7,
+            Self::Cancel => 8,
+            Self::Port => 9,
         }
     }
 }
@@ -95,25 +111,16 @@ pub fn get_handshake_data(info_hash: &[u8; 20]) -> [u8; 68] {
 }
 
 pub fn get_connections_handler<'a>(
-    torrent_file: &TorrentFile,
-    tracker_data: &'a TrackerData,
-    max_peers: Option<usize>,
+    torrent_file: &'a TorrentFile,
+    _tracker_data: &'a TrackerData,
+    file_handler: &'a mut FileHandler,
+    _max_peers: Option<usize>,
 ) -> Vec<ConnectionHandler<'a>> {
-    let mut connections = Vec::<ConnectionHandler<'a>>::new();
-    let max_peers = match max_peers {
-        Some(max) => max,
-        _ => 4,
-    };
+    let mut _connections = Vec::<ConnectionHandler<'a>>::new();
 
-    for (peer_index, peer) in tracker_data.peers_str.iter().enumerate() {
-        if peer_index >= max_peers {
-            break;
-        }
+    let mut connection_handler =
+        ConnectionHandler::new("127.0.0.1:57496", torrent_file, file_handler);
+    connection_handler.connect();
 
-        let mut connection_handler = ConnectionHandler::new(peer);
-        connection_handler.connect(torrent_file, peer);
-        connections.push(connection_handler);
-    }
-
-    return connections;
+    return _connections;
 }

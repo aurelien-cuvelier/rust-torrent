@@ -1,6 +1,7 @@
 use std::{
-    fs,
-    io::{Read, Write},
+    collections::VecDeque,
+    fs::{self, File},
+    io::{Read, Seek, Write},
 };
 
 use log::{debug, info};
@@ -12,23 +13,31 @@ use hex;
 pub struct FileHandler {
     pub file: fs::File,
     pub bitfield: Vec<u8>,
-    pub needed_pieces: Vec<usize>,
+
+    /*
+    Using VecDeque instead of Vector since we can/remove elements from the top
+    with O(1) complexity, while Vector needs to re-organize the whole vector everytime
+    */
+    pub needed_pieces: VecDeque<usize>,
+}
+
+impl FileHandler {
+    pub fn write_piece_to_file(&mut self, start_index: usize, piece: &[u8]) {
+        self.file
+            .seek(std::io::SeekFrom::Start(start_index as u64))
+            .unwrap();
+
+        self.file.write_all(piece).unwrap();
+    }
 }
 
 fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> Vec<u8> {
-    let total_pieces: usize = torrent_file
-        .info
-        .length
-        .div_ceil(torrent_file.info.piece_length);
-
-    info!("File has {} pieces", total_pieces);
-
-    let mut bitfield = vec![0u8; total_pieces.div_ceil(8)];
+    let mut bitfield = vec![0u8; torrent_file.pieces_amount.div_ceil(8)];
     let mut buffer = vec![0u8; torrent_file.info.piece_length];
     let mut hasher = Sha1::new();
     let mut total_read: usize = 0;
 
-    for i in 0..total_pieces {
+    for i in 0..torrent_file.pieces_amount {
         let read = file.read(&mut buffer).unwrap();
         total_read += read;
 
@@ -55,10 +64,10 @@ fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> V
             bitfield[piece_index] |= 1 << bit_index;
         }
 
-        if read != torrent_file.info.piece_length && i != total_pieces - 1 {
+        if read != torrent_file.info.piece_length && i != torrent_file.pieces_amount - 1 {
             panic!(
                 "filled {read} bytes in buffer but iteration is not the last ({i}/{})",
-                total_pieces - 1
+                torrent_file.pieces_amount - 1
             )
         }
     }
@@ -91,21 +100,17 @@ pub fn get_file_handlder(torrent_file: &TorrentFile, _tracker_data: &TrackerData
     }
 
     let bitfield = get_local_file_bitfield(&mut handler, torrent_file);
-    let total_pieces = torrent_file
-        .info
-        .length
-        .div_ceil(torrent_file.info.piece_length);
 
-    println!("total pieces: {total_pieces}");
+    println!("total pieces: {}", torrent_file.pieces_amount);
 
     let needed_pieces =
         bitfield
             .iter()
             .enumerate()
-            .fold(Vec::new(), |mut acc, (index, pieces_bits)| {
+            .fold(VecDeque::new(), |mut acc, (index, pieces_bits)| {
                 for shift in 0..=7 {
                     let piece_index = index * 8 + shift;
-                    if piece_index >= total_pieces {
+                    if piece_index >= torrent_file.pieces_amount {
                         break;
                     }
                     /*
@@ -116,7 +121,7 @@ pub fn get_file_handlder(torrent_file: &TorrentFile, _tracker_data: &TrackerData
                     let piece_is_needed = (pieces_bits << shift) & 0b10000000 == 0;
 
                     if piece_is_needed {
-                        acc.push(piece_index);
+                        acc.push_back(piece_index);
                     }
                     println!("piece {} | needed: {piece_is_needed}", index * 8 + shift);
                 }
