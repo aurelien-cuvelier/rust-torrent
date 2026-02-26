@@ -487,7 +487,7 @@ impl<'a> ConnectionHandler<'a> {
                 MessageType::Port => {}
             }
 
-            if self.file_handler.needed_pieces.len() == 0 {
+            if self.file_handler.needed_pieces.len() == 0 && self.current_piece.is_none() {
                 self.log_info("closing connection has no piece left");
                 break;
             }
