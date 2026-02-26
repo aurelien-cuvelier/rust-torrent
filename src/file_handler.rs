@@ -11,7 +11,7 @@ use crate::{torrent_file::TorrentFile, tracker_data::TrackerData};
 use hex;
 
 pub struct FileHandler {
-    pub file: fs::File,
+    file: fs::File,
     pub bitfield: Vec<u8>,
 
     /*

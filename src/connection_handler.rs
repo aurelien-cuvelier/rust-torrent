@@ -79,7 +79,7 @@ impl<'a> ConnectionHandler<'a> {
             self.log_debug(format!("payload: {:?}", data).as_str());
         } else {
             self.log_debug(
-                format!("payload: {:?}...{} elements", &data[0..100], data.len()).as_str(),
+                format!("payload: {:?}...{} elements", &data[0..32], data.len()).as_str(),
             );
         }
     }
@@ -151,6 +151,33 @@ impl<'a> ConnectionHandler<'a> {
         raw_msg[4] = msg_type.to_byte();
 
         self.log_info(format!("Sending intention: {:?}", msg_type).as_str());
+
+        self.stream_mut().write_all(&raw_msg).unwrap();
+    }
+
+    fn send_bitfield(&mut self) {
+        let mut raw_msg = vec![0u8; 4 + 1 + self.file_handler.bitfield.len()];
+
+        raw_msg[0..4]
+            .copy_from_slice(&(1u32 + self.file_handler.bitfield.len() as u32).to_be_bytes());
+
+        raw_msg[4] = MessageType::Bitfield.to_byte();
+
+        raw_msg[5..].copy_from_slice(&self.file_handler.bitfield);
+
+        self.log_info("Sending bitfield");
+
+        self.stream_mut().write_all(&raw_msg).unwrap();
+    }
+
+    fn send_have(&mut self, piece_index: u32) {
+        let mut raw_msg = [0u8; 4 + 1 + 4];
+
+        raw_msg[0..4].copy_from_slice(&(1u32 + 4u32).to_be_bytes());
+        raw_msg[4] = MessageType::Have.to_byte();
+        raw_msg[5..9].copy_from_slice(&piece_index.to_be_bytes());
+
+        self.log_info(format!("sending have: {piece_index}").as_str());
 
         self.stream_mut().write_all(&raw_msg).unwrap();
     }
@@ -290,6 +317,8 @@ impl<'a> ConnectionHandler<'a> {
                 piece_index as usize * self.torrent_file.info.piece_length,
                 &current_piece.data,
             );
+
+            self.send_have(piece_index);
         }
 
         self.current_piece = None
@@ -354,6 +383,7 @@ impl<'a> ConnectionHandler<'a> {
         );
 
         self.stream = Some(stream);
+        self.send_bitfield();
         self.send_intention(MessageType::Interested);
         self.handle_new_messages()
 
