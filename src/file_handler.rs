@@ -29,6 +29,16 @@ impl FileHandler {
 
         self.file.write_all(piece).unwrap();
     }
+
+    pub fn get_data_from_file(&mut self, start_index: u64, length: usize) -> Vec<u8> {
+        let mut buf = vec![0u8; length];
+        self.file
+            .seek(std::io::SeekFrom::Start(start_index))
+            .unwrap();
+        self.file.read_exact(&mut buf).unwrap();
+
+        return buf;
+    }
 }
 
 fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> Vec<u8> {
@@ -80,7 +90,7 @@ fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> V
     return bitfield;
 }
 
-pub fn get_file_handlder(torrent_file: &TorrentFile, _tracker_data: &TrackerData) -> FileHandler {
+pub fn get_file_handler(torrent_file: &TorrentFile, _tracker_data: &TrackerData) -> FileHandler {
     let path = format!("./downloads/{}", torrent_file.info.name);
 
     let exists_before_open = fs::exists(&path).unwrap();

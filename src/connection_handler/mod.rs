@@ -1,30 +1,18 @@
+mod handlers;
+mod message;
+
 use std::cmp::min;
 use std::collections::HashSet;
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
 
 use log::{debug, error, info, warn};
-use sha1::{Digest, Sha1};
 
 use crate::file_handler::FileHandler;
+
 use crate::torrent_file::TorrentFile;
-use crate::torrent_net::{MessageType, get_handshake_data};
-
-const REQUEST_PIECE_SIZE: u32 = 16u32 * 1024u32;
-
-#[derive(Debug)]
-struct Piece {
-    index: u32,
-    data: Vec<u8>,
-    received_offsets: HashSet<u32>,
-    missing_data: usize,
-}
-
-#[derive(Debug)]
-struct Message {
-    msg_type: Option<MessageType>, //None for keep-alive msg as they have 0 length
-    data: Vec<u8>,
-}
+use crate::tracker::get_handshake_data;
+use message::{Message, MessageType, Piece, REQUEST_PIECE_SIZE};
 
 pub struct ConnectionHandler<'a> {
     peer: &'a str,
@@ -219,112 +207,6 @@ impl<'a> ConnectionHandler<'a> {
         self.stream_mut().write_all(&raw_msg).unwrap();
     }
 
-    /// * raw_msg should be the value after the payload length & msg type!
-    fn handle_new_piece(&mut self, raw_msg: &[u8]) {
-        let piece_index = u32::from_be_bytes(raw_msg[0..4].try_into().unwrap());
-        let offset_inside_piece = u32::from_be_bytes(raw_msg[4..8].try_into().unwrap());
-
-        let current_piece_index = self.current_piece.as_ref().unwrap().index;
-
-        if current_piece_index != piece_index {
-            self.log_err(
-                format!(
-                    "expected piece index {} but received {piece_index}",
-                    current_piece_index
-                )
-                .as_str(),
-            );
-            return;
-        }
-
-        let block_data = &raw_msg[8..];
-
-        let current_piece = self.current_piece.as_mut().unwrap();
-
-        let min_required_length = (offset_inside_piece as usize) + block_data.len();
-        if current_piece.data.len() < min_required_length {
-            current_piece.data.resize(min_required_length, 0);
-        }
-
-        current_piece.data[(offset_inside_piece as usize)..min_required_length]
-            .copy_from_slice(&block_data);
-
-        current_piece.received_offsets.insert(offset_inside_piece);
-        current_piece.missing_data -= block_data.len();
-
-        /*
-         * We shadow current_piece with a non-mut ref because otherwise we cannot
-         * borrow self as non-mutable below. Removing the shadowing does not allow us to compile
-         */
-
-        let current_piece = self.current_piece.as_ref().unwrap();
-
-        self.log_info(
-                format!(
-                    "received {} bytes for piece index {piece_index} & offset {offset_inside_piece} missing data: {}",
-                    block_data.len(),
-                    self.current_piece.as_ref().unwrap().missing_data
-                )
-                .as_str(),
-        );
-
-        if current_piece.missing_data > 0 {
-            let max_offset_index_in_piece =
-                (self.torrent_file.info.piece_length as u32).div_ceil(REQUEST_PIECE_SIZE);
-
-            let next_offset = (0..max_offset_index_in_piece).find_map(|offset_index| {
-                let offset = offset_index * REQUEST_PIECE_SIZE;
-                if current_piece.received_offsets.contains(&offset) {
-                    None
-                } else {
-                    Some(offset)
-                }
-            });
-
-            if next_offset.is_none() {
-                panic!(
-                    "searched next offset but found none for piece index: {piece_index} received offsets: {:?}",
-                    current_piece.received_offsets
-                );
-            }
-
-            self.request_piece(piece_index, next_offset.unwrap());
-            return;
-        }
-
-        let hash_data = Sha1::new()
-            .chain_update(self.current_piece.as_ref().unwrap().data.as_slice())
-            .finalize();
-        let calculated_hash = hash_data.as_slice();
-
-        let expected_hash = &self.torrent_file.info.pieces
-            [(piece_index as usize * 20)..(piece_index as usize * 20) + 20];
-
-        let hashes_match = calculated_hash == expected_hash;
-
-        self.log_info(
-            format!(
-                "Piece index {} is done.\nDownloaded: {}\nExpected:   {}\nmatch: {hashes_match}",
-                piece_index,
-                hex::encode(calculated_hash),
-                hex::encode(expected_hash)
-            )
-            .as_str(),
-        );
-
-        if hashes_match {
-            self.file_handler.write_piece_to_file(
-                piece_index as usize * self.torrent_file.info.piece_length,
-                &current_piece.data,
-            );
-
-            self.send_have(piece_index);
-        }
-
-        self.current_piece = None
-        //let next_offset = 0..
-    }
-
     pub fn connect(&mut self) {
         //handshakes are 68 bytes long
 
@@ -384,8 +266,18 @@ impl<'a> ConnectionHandler<'a> {
 
         self.stream = Some(stream);
         self.send_bitfield();
-        self.send_intention(MessageType::Interested);
-        self.handle_new_messages()
+        if self.file_handler.needed_pieces.len() > 0 {
+            self.send_intention(MessageType::Interested);
+        } else {
+            self.send_intention(MessageType::NotInterested);
+        }
+
+        if self.file_handler.needed_pieces.len() < self.torrent_file.pieces_amount {
+            //we already have some pieces to we can unchoke
+            self.send_intention(MessageType::Unchoke);
+        }
+
+        self.run_message_loop();
 
         //stream.shutdown(Shutdown::Both).unwrap();
     }
@@ -432,7 +324,7 @@ impl<'a> ConnectionHandler<'a> {
         });
     }
 
-    fn handle_new_messages(&mut self) {
+    fn run_message_loop(&mut self) {
         loop {
             let new_msg = self.await_next_msg();
 
@@ -478,18 +370,15 @@ impl<'a> ConnectionHandler<'a> {
 
                     self.bitfield = Some(bit_field);
                 }
-                MessageType::Request => {}
+                MessageType::Request => {
+                    self.handle_request_piece(&new_msg.data[1..]);
+                }
                 MessageType::Piece => {
                     let truncated_payload = &new_msg.data[1..];
                     self.handle_new_piece(truncated_payload);
                 }
                 MessageType::Cancel => {}
                 MessageType::Port => {}
-            }
-
-            if self.file_handler.needed_pieces.len() == 0 && self.current_piece.is_none() {
-                self.log_info("closing connection has no piece left");
-                break;
             }
 
             if self.connected
@@ -509,7 +398,9 @@ impl<'a> ConnectionHandler<'a> {
     pub fn download_next_piece(&mut self) {
         let next_needed_piece = match self.file_handler.needed_pieces.pop_front() {
             Some(piece) => piece,
-            _ => {
+            None => {
+                self.log_info("Nothing to download anymore");
+                self.send_intention(MessageType::NotInterested);
                 return;
             }
         };
