@@ -141,4 +141,38 @@ impl ConnectionHandler<'_> {
         self.stream_mut().write_all(&piece_msg).unwrap();
         self.stream_mut().flush().unwrap();
     }
+
+    pub fn handle_bitfield(&mut self, raw_msg: &[u8]) {
+        let bitfield_vec = raw_msg.to_vec();
+        let required_bitfield_length = self.torrent_file.pieces_amount.div_ceil(8);
+        if bitfield_vec.len() != required_bitfield_length {
+            self.log_err(
+                format!(
+                    "sent a bitfield of length {} while torrent needs {}",
+                    bitfield_vec.len(),
+                    required_bitfield_length
+                )
+                .as_str(),
+            );
+        }
+        self.bitfield = Some(bitfield_vec);
+
+        let mut has_missing_pieces = false;
+
+        for piece_index in 0..self.torrent_file.pieces_amount {
+            println!("{piece_index}");
+            if !self.has_piece(piece_index) {
+                has_missing_pieces = true;
+            }
+        }
+
+        self.peer_has_missing_pieces = has_missing_pieces;
+    }
+
+    pub fn handle_have(&mut self, raw_msg: &[u8]) {
+        let piece_index = u32::from_be_bytes(raw_msg.try_into().unwrap());
+        self.log_info(format!("peer has new piece {piece_index}").as_str());
+
+        self.update_peer_bitfield(piece_index, true);
+    }
 }

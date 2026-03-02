@@ -2,7 +2,7 @@ mod handlers;
 mod message;
 
 use std::cmp::min;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
 
@@ -22,6 +22,8 @@ pub struct ConnectionHandler<'a> {
     interested: bool,
     unchoked: bool,
     current_piece: Option<Piece>,
+    next_downloadable_pieces: VecDeque<usize>,
+    peer_has_missing_pieces: bool,
 
     bitfield: Option<Vec<u8>>,
     stream: Option<TcpStream>,
@@ -43,6 +45,10 @@ impl<'a> ConnectionHandler<'a> {
             torrent_file,
             file_handler,
             current_piece: None,
+            next_downloadable_pieces: VecDeque::new(),
+
+            //setting this to true at ini because we don't know
+            peer_has_missing_pieces: true,
         }
     }
 
@@ -196,7 +202,7 @@ impl<'a> ConnectionHandler<'a> {
 
         raw_msg[13..17].copy_from_slice(&(req_size).to_be_bytes());
 
-        self.log_info(format!("sending request msg: {:?}", raw_msg).as_str());
+        self.log_info(format!("sending request msg for piece index {piece} offset {offset} length {req_size}\n{:?}", raw_msg).as_str());
 
         if self.current_piece.is_none() {
             self.start_new_piece(piece);
@@ -337,6 +343,12 @@ impl<'a> ConnectionHandler<'a> {
 
             if new_msg.data.len() == 0 {
                 self.log_info("received keep-alive msg");
+                /*
+                 * Currently sending KA message in response to a KA message as
+                 * we are running sync single thread.
+                 * Should implement own KA timer with multi thread implem
+                 */
+                self.send_keep_alive();
                 continue;
             }
 
@@ -350,25 +362,16 @@ impl<'a> ConnectionHandler<'a> {
                 MessageType::Interested => self.interested = true,
                 MessageType::NotInterested => self.interested = false,
 
-                MessageType::Have => {}
+                MessageType::Have => {
+                    assert!(
+                        new_msg.data.len() == 5,
+                        "received HAVE msg with length of {}",
+                        new_msg.data.len()
+                    );
+                    self.handle_have(&new_msg.data[1..]);
+                }
                 MessageType::Bitfield => {
-                    //let bitfield = &full_payload[1..];
-                    let bit_field = new_msg.data[1..].to_vec();
-                    let required_bitfield_length = self.torrent_file.pieces_amount.div_ceil(8);
-                    if bit_field.len() != required_bitfield_length {
-                        self.log_err(
-                            format!(
-                                "sent a bitfield of length {} while torrent needs {}",
-                                bit_field.len(),
-                                required_bitfield_length
-                            )
-                            .as_str(),
-                        );
-
-                        break;
-                    }
-
-                    self.bitfield = Some(bit_field);
+                    self.handle_bitfield(&new_msg.data[1..]);
                 }
                 MessageType::Request => {
                     self.handle_request_piece(&new_msg.data[1..]);
@@ -385,9 +388,19 @@ impl<'a> ConnectionHandler<'a> {
                 && self.unchoked
                 && self.bitfield.is_some()
                 && self.current_piece.is_none()
-                && self.file_handler.needed_pieces.len() > 0
             {
-                self.download_next_piece();
+                //plan new next pieces available from peer if the inner buffer is empty
+                self.plan_next_pieces();
+
+                if self.next_downloadable_pieces.len() > 0 {
+                    let next_piece = self.next_downloadable_pieces.pop_front().unwrap();
+                    self.start_new_piece(next_piece as u32);
+                    self.request_piece(next_piece as u32, 0u32);
+                }
+
+                if self.peer_has_missing_pieces {}
+
+                //self.download_next_piece();
             }
         }
 
@@ -395,28 +408,63 @@ impl<'a> ConnectionHandler<'a> {
         let _ = self.stream_mut().shutdown(std::net::Shutdown::Both);
     }
 
-    pub fn download_next_piece(&mut self) {
-        let next_needed_piece = match self.file_handler.needed_pieces.pop_front() {
-            Some(piece) => piece,
-            None => {
-                self.log_info("Nothing to download anymore");
-                self.send_intention(MessageType::NotInterested);
-                return;
+    pub fn plan_next_pieces(&mut self) {
+        if self.next_downloadable_pieces.len() > 0 {
+            return;
+        }
+
+        let mut not_available_pieces = HashSet::<usize>::new();
+
+        loop {
+            let next_needed_piece = self.file_handler.needed_pieces.pop_front();
+
+            if next_needed_piece.is_none() {
+                break;
             }
-        };
 
-        if !self.has_piece(next_needed_piece) {
-            self.file_handler
-                .needed_pieces
-                .push_front(next_needed_piece);
-            self.log_info("putting back piece {next_needed_piece} as peer does not have it");
+            let next_needed_piece = next_needed_piece.unwrap();
+
+            if !self.has_piece(next_needed_piece) {
+                not_available_pieces.insert(next_needed_piece);
+                continue;
+            }
+
+            self.next_downloadable_pieces.push_back(next_needed_piece);
+
+            if self.next_downloadable_pieces.len() > 4 {
+                break;
+            }
         }
 
-        if self.current_piece.is_none() {
-            self.start_new_piece(next_needed_piece as u32);
-        }
+        not_available_pieces.iter().for_each(|piece| {
+            self.log_info(format!("putting back piece {piece} as peer does not have it").as_str());
+            self.file_handler.needed_pieces.push_front(*piece);
+        });
 
-        info!("{} has piece {next_needed_piece}", self.peer);
-        self.request_piece(next_needed_piece as u32, 0u32);
+        if self.file_handler.needed_pieces.len() == 0 {
+            self.log_info(format!("Done downloading all torrent pieces",).as_str());
+            self.send_intention(MessageType::NotInterested);
+            return;
+        } else if self.next_downloadable_pieces.len() == 0 {
+            self.log_info("cannot download any more pieces from peer");
+        }
+    }
+
+    pub fn update_peer_bitfield(&mut self, piece_index: u32, available: bool) {
+        let bitfield = self.bitfield.as_mut().unwrap();
+
+        let index_in_bitfield = piece_index.div_euclid(8) as usize;
+        let bit_offset = 7 - (piece_index % 8);
+
+        if available {
+            bitfield[index_in_bitfield] |= 1 << bit_offset;
+        } else {
+            bitfield[index_in_bitfield] &= !(1 << bit_offset);
+        }
+    }
+
+    pub fn send_keep_alive(&mut self) {
+        self.log_info("Sending keep-alive msg");
+        self.stream_mut().write_all(&0u32.to_be_bytes()).unwrap();
     }
 }
