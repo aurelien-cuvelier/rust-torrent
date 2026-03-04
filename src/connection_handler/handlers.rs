@@ -99,7 +99,7 @@ impl ConnectionHandler<'_> {
         );
 
         if hashes_match {
-            self.file_handler.write_piece_to_file(
+            self.file_handler.lock().unwrap().write_piece_to_file(
                 piece_index as usize * self.torrent_file.info.piece_length,
                 &current_piece.data,
             );
@@ -107,6 +107,16 @@ impl ConnectionHandler<'_> {
             self.send_have(piece_index);
         }
 
+        self.log_info(
+            format!(
+                "download progress: {}%",
+                ((self.torrent_file.pieces_amount as f64
+                    - self.file_handler.lock().unwrap().needed_pieces.len() as f64)
+                    / self.torrent_file.pieces_amount as f64)
+                    * 100f64
+            )
+            .as_str(),
+        );
         self.current_piece = None;
     }
 
@@ -120,6 +130,8 @@ impl ConnectionHandler<'_> {
 
         let requested_data = self
             .file_handler
+            .lock()
+            .unwrap()
             .get_data_from_file(start_index as u64, length as usize);
 
         let body_len = 1 + 4 + 4 + requested_data.len(); // id + index + begin + block
@@ -160,7 +172,6 @@ impl ConnectionHandler<'_> {
         let mut has_missing_pieces = false;
 
         for piece_index in 0..self.torrent_file.pieces_amount {
-            println!("{piece_index}");
             if !self.has_piece(piece_index) {
                 has_missing_pieces = true;
             }

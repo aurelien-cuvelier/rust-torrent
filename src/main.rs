@@ -41,9 +41,13 @@ fn main() {
 
     info!("{:?}", tracker_data);
 
-    let mut file_handler = file_handler::get_file_handler(&torrent, &tracker_data);
+    let file_handler = file_handler::get_file_handler(&torrent, &tracker_data);
 
-    tracker::get_connections_handler(&torrent, &tracker_data, &mut file_handler, Some(1));
+    let handles = tracker::get_connections_handler(torrent, &tracker_data, file_handler, Some(50));
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
 
     println!("END");
 }

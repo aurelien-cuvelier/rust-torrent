@@ -5,6 +5,7 @@ use std::cmp::min;
 use std::collections::{HashSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
 
 use log::{debug, error, info, warn};
 
@@ -16,8 +17,8 @@ use message::{Message, MessageType, Piece, REQUEST_PIECE_SIZE};
 
 pub struct ConnectionHandler<'a> {
     peer: &'a str,
-    torrent_file: &'a TorrentFile,
-    file_handler: &'a mut FileHandler,
+    torrent_file: Arc<TorrentFile>,
+    file_handler: Arc<Mutex<FileHandler>>,
     connected: bool, //success TCP connection + validated info hash
     peer_interested: bool,
     peer_unchoked: bool,
@@ -32,8 +33,8 @@ pub struct ConnectionHandler<'a> {
 impl<'a> ConnectionHandler<'a> {
     pub fn new(
         peer: &'a str,
-        torrent_file: &'a TorrentFile,
-        file_handler: &'a mut FileHandler,
+        torrent_file: Arc<TorrentFile>,
+        file_handler: Arc<Mutex<FileHandler>>,
     ) -> Self {
         ConnectionHandler {
             peer,
@@ -150,14 +151,15 @@ impl<'a> ConnectionHandler<'a> {
     }
 
     fn send_bitfield(&mut self) {
-        let mut raw_msg = vec![0u8; 4 + 1 + self.file_handler.bitfield.len()];
+        let mut raw_msg = vec![0u8; 4 + 1 + self.file_handler.lock().unwrap().bitfield.len()];
 
-        raw_msg[0..4]
-            .copy_from_slice(&(1u32 + self.file_handler.bitfield.len() as u32).to_be_bytes());
+        raw_msg[0..4].copy_from_slice(
+            &(1u32 + self.file_handler.lock().unwrap().bitfield.len() as u32).to_be_bytes(),
+        );
 
         raw_msg[4] = MessageType::Bitfield.to_byte();
 
-        raw_msg[5..].copy_from_slice(&self.file_handler.bitfield);
+        raw_msg[5..].copy_from_slice(&self.file_handler.lock().unwrap().bitfield);
 
         self.log_info("Sending bitfield");
 
@@ -272,13 +274,13 @@ impl<'a> ConnectionHandler<'a> {
 
         self.stream = Some(stream);
         self.send_bitfield();
-        if self.file_handler.needed_pieces.len() > 0 {
+        if self.file_handler.lock().unwrap().needed_pieces.len() > 0 {
             self.send_intention(MessageType::Interested);
         } else {
             self.send_intention(MessageType::NotInterested);
         }
 
-        if self.file_handler.needed_pieces.len() < self.torrent_file.pieces_amount {
+        if self.file_handler.lock().unwrap().needed_pieces.len() < self.torrent_file.pieces_amount {
             //we already have some pieces to we can unchoke
             self.send_intention(MessageType::Unchoke);
         }
@@ -395,7 +397,8 @@ impl<'a> ConnectionHandler<'a> {
             }
 
             if self.peer_bitfield.is_some()
-                && (!self.peer_interested && self.file_handler.needed_pieces.len() == 0)
+                && (!self.peer_interested
+                    && self.file_handler.lock().unwrap().needed_pieces.len() == 0)
             {
                 self.log_info(
                     "dropping connection as we downloaded all and peer is not interested",
@@ -431,7 +434,7 @@ impl<'a> ConnectionHandler<'a> {
         let mut not_available_pieces = HashSet::<usize>::new();
 
         loop {
-            let next_needed_piece = self.file_handler.needed_pieces.pop_front();
+            let next_needed_piece = self.file_handler.lock().unwrap().needed_pieces.pop_front();
 
             if next_needed_piece.is_none() {
                 break;
@@ -452,7 +455,11 @@ impl<'a> ConnectionHandler<'a> {
         }
 
         not_available_pieces.iter().for_each(|piece| {
-            self.file_handler.needed_pieces.push_front(*piece);
+            self.file_handler
+                .lock()
+                .unwrap()
+                .needed_pieces
+                .push_front(*piece);
         });
         self.log_info(
             format!(
@@ -463,7 +470,7 @@ impl<'a> ConnectionHandler<'a> {
             .as_str(),
         );
 
-        if self.file_handler.needed_pieces.len() == 0 {
+        if self.file_handler.lock().unwrap().needed_pieces.len() == 0 {
             self.log_info(format!("Done downloading all torrent pieces",).as_str());
             self.send_intention(MessageType::NotInterested);
         } else if self.next_downloadable_pieces.len() == 0 {

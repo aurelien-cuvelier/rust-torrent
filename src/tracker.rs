@@ -1,3 +1,7 @@
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+
+use log::info;
 use reqwest;
 use urlencoding::encode_binary;
 
@@ -63,16 +67,46 @@ pub fn get_handshake_data(info_hash: &[u8; 20]) -> [u8; 68] {
 }
 
 pub fn get_connections_handler<'a>(
-    torrent_file: &'a TorrentFile,
-    _tracker_data: &'a TrackerData,
-    file_handler: &'a mut FileHandler,
-    _max_peers: Option<usize>,
-) -> Vec<ConnectionHandler<'a>> {
-    let mut _connections = Vec::<ConnectionHandler<'a>>::new();
+    torrent_file: TorrentFile,
+    tracker_data: &'a TrackerData,
+    file_handler: FileHandler,
+    max_peers: Option<usize>,
+) -> Vec<JoinHandle<()>> {
+    let mut connections_handles = Vec::<JoinHandle<()>>::new();
 
-    let mut connection_handler =
-        ConnectionHandler::new("127.0.0.1:57496", torrent_file, file_handler);
-    connection_handler.connect();
+    let max_peers = match max_peers {
+        Some(max) => max,
+        None => 5,
+    };
 
-    return _connections;
+    let shared_torrent_file = Arc::new(torrent_file);
+    let shared_file_handler = Arc::new(Mutex::new(file_handler));
+
+    for (peer_index, peer_str) in tracker_data.peers_str.iter().enumerate() {
+        if peer_index >= max_peers {
+            break;
+        }
+
+        let torrent_clone = Arc::clone(&shared_torrent_file);
+        let file_handler_clone = Arc::clone(&shared_file_handler);
+
+        let owned_peer_str = peer_str.clone();
+        connections_handles.push(thread::spawn(move || {
+            let mut connection_handler = ConnectionHandler::new(
+                //"127.0.0.1:57496",
+                owned_peer_str.as_str(),
+                torrent_clone,
+                file_handler_clone,
+            );
+            connection_handler.connect();
+        }));
+
+        info!(
+            "Spawned thread for {peer_str} [{}/{}]",
+            connections_handles.len(),
+            max_peers
+        )
+    }
+
+    return connections_handles;
 }
