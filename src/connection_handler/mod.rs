@@ -384,11 +384,26 @@ impl<'a> ConnectionHandler<'a> {
                 MessageType::Port => {}
             }
 
-            if self.connected
-                && self.peer_unchoked
-                && self.peer_bitfield.is_some()
-                && self.current_piece.is_none()
+            if !self.connected {
+                /*
+                 * Should not happen because we connect on top of
+                 * the loop, and return in case of disconnect.
+                 * So most likely a bug if came here
+                 */
+                self.log_err("peer is not connected");
+                break;
+            }
+
+            if self.peer_bitfield.is_some()
+                && (!self.peer_interested && self.file_handler.needed_pieces.len() == 0)
             {
+                self.log_info(
+                    "dropping connection as we downloaded all and peer is not interested",
+                );
+                break;
+            }
+
+            if self.peer_unchoked && self.peer_bitfield.is_some() && self.current_piece.is_none() {
                 //plan new next pieces available from peer if the inner buffer is empty
                 self.plan_next_pieces();
 
@@ -437,9 +452,16 @@ impl<'a> ConnectionHandler<'a> {
         }
 
         not_available_pieces.iter().for_each(|piece| {
-            self.log_info(format!("putting back piece {piece} as peer does not have it").as_str());
             self.file_handler.needed_pieces.push_front(*piece);
         });
+        self.log_info(
+            format!(
+                "putting back {} pieces that peer does not have\n{:?}",
+                not_available_pieces.len(),
+                not_available_pieces
+            )
+            .as_str(),
+        );
 
         if self.file_handler.needed_pieces.len() == 0 {
             self.log_info(format!("Done downloading all torrent pieces",).as_str());
