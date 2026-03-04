@@ -19,13 +19,13 @@ pub struct ConnectionHandler<'a> {
     torrent_file: &'a TorrentFile,
     file_handler: &'a mut FileHandler,
     connected: bool, //success TCP connection + validated info hash
-    interested: bool,
-    unchoked: bool,
+    peer_interested: bool,
+    peer_unchoked: bool,
     current_piece: Option<Piece>,
     next_downloadable_pieces: VecDeque<usize>,
     peer_has_missing_pieces: bool,
 
-    bitfield: Option<Vec<u8>>,
+    peer_bitfield: Option<Vec<u8>>,
     stream: Option<TcpStream>,
 }
 
@@ -38,9 +38,9 @@ impl<'a> ConnectionHandler<'a> {
         ConnectionHandler {
             peer,
             connected: false,
-            interested: false,
-            unchoked: false,
-            bitfield: None,
+            peer_interested: false,
+            peer_unchoked: false,
+            peer_bitfield: None,
             stream: None,
             torrent_file,
             file_handler,
@@ -112,7 +112,7 @@ impl<'a> ConnectionHandler<'a> {
             return false;
         }
 
-        let peer_bitfield = match &self.bitfield {
+        let peer_bitfield = match &self.peer_bitfield {
             None => {
                 self.log_err("cannot check pieces before receiving bitfield");
                 return false;
@@ -357,10 +357,10 @@ impl<'a> ConnectionHandler<'a> {
             self.log_payload(&new_msg.data);
 
             match msg_type {
-                MessageType::Choke => self.unchoked = false,
-                MessageType::Unchoke => self.unchoked = true,
-                MessageType::Interested => self.interested = true,
-                MessageType::NotInterested => self.interested = false,
+                MessageType::Choke => self.peer_unchoked = false,
+                MessageType::Unchoke => self.peer_unchoked = true,
+                MessageType::Interested => self.peer_interested = true,
+                MessageType::NotInterested => self.peer_interested = false,
 
                 MessageType::Have => {
                     assert!(
@@ -385,8 +385,8 @@ impl<'a> ConnectionHandler<'a> {
             }
 
             if self.connected
-                && self.unchoked
-                && self.bitfield.is_some()
+                && self.peer_unchoked
+                && self.peer_bitfield.is_some()
                 && self.current_piece.is_none()
             {
                 //plan new next pieces available from peer if the inner buffer is empty
@@ -444,14 +444,13 @@ impl<'a> ConnectionHandler<'a> {
         if self.file_handler.needed_pieces.len() == 0 {
             self.log_info(format!("Done downloading all torrent pieces",).as_str());
             self.send_intention(MessageType::NotInterested);
-            return;
         } else if self.next_downloadable_pieces.len() == 0 {
             self.log_info("cannot download any more pieces from peer");
         }
     }
 
     pub fn update_peer_bitfield(&mut self, piece_index: u32, available: bool) {
-        let bitfield = self.bitfield.as_mut().unwrap();
+        let bitfield = self.peer_bitfield.as_mut().unwrap();
 
         let index_in_bitfield = piece_index.div_euclid(8) as usize;
         let bit_offset = 7 - (piece_index % 8);

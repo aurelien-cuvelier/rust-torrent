@@ -155,7 +155,7 @@ impl ConnectionHandler<'_> {
                 .as_str(),
             );
         }
-        self.bitfield = Some(bitfield_vec);
+        self.peer_bitfield = Some(bitfield_vec);
 
         let mut has_missing_pieces = false;
 
