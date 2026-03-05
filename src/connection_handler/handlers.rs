@@ -45,7 +45,7 @@ impl ConnectionHandler<'_> {
 
         let current_piece = self.current_piece.as_ref().unwrap();
 
-        self.log_info(
+        self.log_debug(
                 format!(
                     "received {} bytes for piece index {piece_index} & offset {offset_inside_piece} missing data: {}",
                     block_data.len(),
@@ -88,7 +88,7 @@ impl ConnectionHandler<'_> {
 
         let hashes_match = calculated_hash == expected_hash;
 
-        self.log_info(
+        self.log_debug(
             format!(
                 "Piece index {} is done.\nDownloaded: {}\nExpected:   {}\nmatch: {hashes_match}",
                 piece_index,
@@ -107,7 +107,7 @@ impl ConnectionHandler<'_> {
             self.send_have(piece_index);
         }
 
-        self.log_info(
+        self.log_debug(
             format!(
                 "download progress: {}%",
                 ((self.torrent_file.pieces_amount as f64
@@ -142,7 +142,7 @@ impl ConnectionHandler<'_> {
         piece_msg[9..13].copy_from_slice(&offset_inside_piece.to_be_bytes());
         piece_msg[13..].copy_from_slice(&requested_data);
 
-        self.log_info(
+        self.log_debug(
             format!(
                 "sending piece {piece_index} offset {offset_inside_piece} length {}",
                 requested_data.len()
@@ -182,7 +182,7 @@ impl ConnectionHandler<'_> {
 
     pub fn handle_have(&mut self, raw_msg: &[u8]) {
         let piece_index = u32::from_be_bytes(raw_msg.try_into().unwrap());
-        self.log_info(format!("peer has new piece {piece_index}").as_str());
+        self.log_debug(format!("peer has new piece {piece_index}").as_str());
 
         self.update_peer_bitfield(piece_index, true);
     }

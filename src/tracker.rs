@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use log::info;
+use log::debug;
 use reqwest;
 use urlencoding::encode_binary;
 
@@ -101,7 +101,7 @@ pub fn get_connections_handler<'a>(
             connection_handler.connect();
         }));
 
-        info!(
+        debug!(
             "Spawned thread for {peer_str} [{}/{}]",
             connections_handles.len(),
             max_peers

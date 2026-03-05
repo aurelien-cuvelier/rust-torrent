@@ -95,7 +95,7 @@ impl<'a> ConnectionHandler<'a> {
             missing_data: piece_data_length,
         });
 
-        self.log_info(format!("Starting new piece {:?}", self.current_piece).as_str());
+        self.log_debug(format!("Starting new piece {:?}", self.current_piece).as_str());
     }
 
     fn stream_mut(&mut self) -> &mut TcpStream {
@@ -145,7 +145,7 @@ impl<'a> ConnectionHandler<'a> {
         raw_msg[0..4].copy_from_slice(&1u32.to_be_bytes());
         raw_msg[4] = msg_type.to_byte();
 
-        self.log_info(format!("Sending intention: {:?}", msg_type).as_str());
+        self.log_debug(format!("Sending intention: {:?}", msg_type).as_str());
 
         self.stream_mut().write_all(&raw_msg).unwrap();
     }
@@ -161,7 +161,7 @@ impl<'a> ConnectionHandler<'a> {
 
         raw_msg[5..].copy_from_slice(&self.file_handler.lock().unwrap().bitfield);
 
-        self.log_info("Sending bitfield");
+        self.log_debug("Sending bitfield");
 
         self.stream_mut().write_all(&raw_msg).unwrap();
     }
@@ -173,7 +173,7 @@ impl<'a> ConnectionHandler<'a> {
         raw_msg[4] = MessageType::Have.to_byte();
         raw_msg[5..9].copy_from_slice(&piece_index.to_be_bytes());
 
-        self.log_info(format!("sending have: {piece_index}").as_str());
+        self.log_debug(format!("sending have: {piece_index}").as_str());
 
         self.stream_mut().write_all(&raw_msg).unwrap();
     }
@@ -204,7 +204,7 @@ impl<'a> ConnectionHandler<'a> {
 
         raw_msg[13..17].copy_from_slice(&(req_size).to_be_bytes());
 
-        self.log_info(format!("sending request msg for piece index {piece} offset {offset} length {req_size}\n{:?}", raw_msg).as_str());
+        self.log_debug(format!("sending request msg for piece index {piece} offset {offset} length {req_size}\n{:?}", raw_msg).as_str());
 
         if self.current_piece.is_none() {
             self.start_new_piece(piece);
@@ -231,7 +231,7 @@ impl<'a> ConnectionHandler<'a> {
         };
 
         let handshake_data = get_handshake_data(&self.torrent_file.info_hash);
-        self.log_info(
+        self.log_debug(
             format!(
                 "sending handshake data {:?}",
                 String::from_utf8_lossy(&handshake_data)
@@ -250,7 +250,7 @@ impl<'a> ConnectionHandler<'a> {
             return;
         }
 
-        self.log_info(
+        self.log_debug(
             format!(
                 "received handshake response: {:?}",
                 String::from_utf8_lossy(&handshake_response)
@@ -263,7 +263,7 @@ impl<'a> ConnectionHandler<'a> {
 
         let info_hash_match = self.torrent_file.info_hash.eq(info_hash);
 
-        self.log_info(
+        self.log_debug(
             format!(
                 "peer id: {} | info hash match: {}",
                 String::from_utf8_lossy(peer_id),
@@ -344,7 +344,7 @@ impl<'a> ConnectionHandler<'a> {
             let new_msg = new_msg.unwrap();
 
             if new_msg.data.len() == 0 {
-                self.log_info("received keep-alive msg");
+                self.log_debug("received keep-alive msg");
                 /*
                  * Currently sending KA message in response to a KA message as
                  * we are running sync single thread.
@@ -461,7 +461,7 @@ impl<'a> ConnectionHandler<'a> {
                 .needed_pieces
                 .push_front(*piece);
         });
-        self.log_info(
+        self.log_debug(
             format!(
                 "putting back {} pieces that peer does not have\n{:?}",
                 not_available_pieces.len(),
@@ -474,7 +474,7 @@ impl<'a> ConnectionHandler<'a> {
             self.log_info(format!("Done downloading all torrent pieces",).as_str());
             self.send_intention(MessageType::NotInterested);
         } else if self.next_downloadable_pieces.len() == 0 {
-            self.log_info("cannot download any more pieces from peer");
+            self.log_debug("cannot download any more pieces from peer");
         }
     }
 
@@ -492,7 +492,7 @@ impl<'a> ConnectionHandler<'a> {
     }
 
     pub fn send_keep_alive(&mut self) {
-        self.log_info("Sending keep-alive msg");
+        self.log_debug("Sending keep-alive msg");
         self.stream_mut().write_all(&0u32.to_be_bytes()).unwrap();
     }
 }

@@ -1,7 +1,7 @@
 use std::{env::args, fs::File, process};
 
 use dotenvy;
-use log::{error, info};
+use log::{debug, error};
 use rust_torrent::{file_handler, torrent_file::TorrentFile, tracker};
 
 fn main() {
@@ -39,7 +39,7 @@ fn main() {
 
     let tracker_data = res_tracker_data.unwrap();
 
-    info!("{:?}", tracker_data);
+    debug!("{:?}", tracker_data);
 
     let file_handler = file_handler::get_file_handler(&torrent, &tracker_data);
 
