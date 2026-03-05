@@ -19,6 +19,7 @@ pub struct FileHandler {
     with O(1) complexity, while Vector needs to re-organize the whole vector everytime
     */
     pub needed_pieces: VecDeque<usize>,
+    pub written_bytes: usize,
 }
 
 impl FileHandler {
@@ -28,6 +29,7 @@ impl FileHandler {
             .unwrap();
 
         self.file.write_all(piece).unwrap();
+        self.written_bytes += piece.len();
     }
 
     pub fn get_data_from_file(&mut self, start_index: u64, length: usize) -> Vec<u8> {
@@ -41,11 +43,13 @@ impl FileHandler {
     }
 }
 
-fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> Vec<u8> {
+fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> (Vec<u8>, usize) {
     let mut bitfield = vec![0u8; torrent_file.pieces_amount.div_ceil(8)];
     let mut buffer = vec![0u8; torrent_file.info.piece_length];
     let mut hasher = Sha1::new();
     let mut total_read: usize = 0;
+
+    let mut total_verified_bytes: usize = 0;
 
     for i in 0..torrent_file.pieces_amount {
         let read = file.read(&mut buffer).unwrap();
@@ -72,6 +76,7 @@ fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> V
         if hashes_match {
             //same as bitfield[piece_index] = bitfield[piece_index] | (1 << bit_index);
             bitfield[piece_index] |= 1 << bit_index;
+            total_verified_bytes += read;
         }
 
         if read != torrent_file.info.piece_length && i != torrent_file.pieces_amount - 1 {
@@ -87,7 +92,7 @@ fn get_local_file_bitfield(file: &mut fs::File, torrent_file: &TorrentFile) -> V
         torrent_file.info.length, bitfield
     );
 
-    return bitfield;
+    return (bitfield, total_verified_bytes);
 }
 
 pub fn get_file_handler(torrent_file: &TorrentFile, _tracker_data: &TrackerData) -> FileHandler {
@@ -109,7 +114,7 @@ pub fn get_file_handler(torrent_file: &TorrentFile, _tracker_data: &TrackerData)
         debug!("opened file {}", torrent_file.info.name);
     }
 
-    let bitfield = get_local_file_bitfield(&mut handler, torrent_file);
+    let (bitfield, total_verified_bytes) = get_local_file_bitfield(&mut handler, torrent_file);
 
     println!("total pieces: {}", torrent_file.pieces_amount);
 
@@ -143,5 +148,6 @@ pub fn get_file_handler(torrent_file: &TorrentFile, _tracker_data: &TrackerData)
         file: handler,
         bitfield,
         needed_pieces,
+        written_bytes: total_verified_bytes,
     }
 }

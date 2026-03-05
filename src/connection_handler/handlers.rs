@@ -98,22 +98,28 @@ impl ConnectionHandler<'_> {
             .as_str(),
         );
 
-        if hashes_match {
-            self.file_handler.lock().unwrap().write_piece_to_file(
-                piece_index as usize * self.torrent_file.info.piece_length,
-                &current_piece.data,
-            );
+        let total_written_bytes = {
+            let mut file_handler = self.file_handler.lock().unwrap();
+            let mut total_written_bytes = 0;
+            if hashes_match {
+                file_handler.write_piece_to_file(
+                    piece_index as usize * self.torrent_file.info.piece_length,
+                    &current_piece.data,
+                );
 
+                total_written_bytes += file_handler.written_bytes;
+            }
+            total_written_bytes
+        };
+
+        if hashes_match {
             self.send_have(piece_index);
         }
 
         self.log_debug(
             format!(
                 "download progress: {}%",
-                ((self.torrent_file.pieces_amount as f64
-                    - self.file_handler.lock().unwrap().needed_pieces.len() as f64)
-                    / self.torrent_file.pieces_amount as f64)
-                    * 100f64
+                (total_written_bytes as f64 / self.torrent_file.info.length as f64) * 100f64
             )
             .as_str(),
         );

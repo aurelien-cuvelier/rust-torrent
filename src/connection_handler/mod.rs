@@ -287,6 +287,7 @@ impl<'a> ConnectionHandler<'a> {
 
         self.run_message_loop();
 
+        self.log_info("Exiting thread");
         //stream.shutdown(Shutdown::Both).unwrap();
     }
 
@@ -397,8 +398,10 @@ impl<'a> ConnectionHandler<'a> {
             }
 
             if self.peer_bitfield.is_some()
+                && self.current_piece.is_none()
                 && (!self.peer_interested
-                    && self.file_handler.lock().unwrap().needed_pieces.len() == 0)
+                    && self.file_handler.lock().unwrap().written_bytes
+                        == self.torrent_file.info.length)
             {
                 self.log_info(
                     "dropping connection as we downloaded all and peer is not interested",
