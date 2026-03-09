@@ -93,9 +93,18 @@ impl<'a> ConnectionHandler<'a> {
             data: Vec::with_capacity(self.torrent_file.info.piece_length),
             received_offsets: HashSet::new(),
             missing_data: piece_data_length,
+            requested_offsets: HashSet::new(),
         });
 
         self.log_debug(format!("Starting new piece {:?}", self.current_piece).as_str());
+
+        let max_offset_for_piece = (piece_data_length as u32).div_ceil(REQUEST_PIECE_SIZE);
+
+        for offset in 0..max_offset_for_piece {
+            self.request_piece(piece_index, offset * REQUEST_PIECE_SIZE);
+        }
+
+        self.stream_mut().flush().unwrap();
     }
 
     fn stream_mut(&mut self) -> &mut TcpStream {
@@ -213,14 +222,20 @@ impl<'a> ConnectionHandler<'a> {
         //self.waiting_for_piece = Some(piece);
 
         self.stream_mut().write_all(&raw_msg).unwrap();
+        self.current_piece
+            .as_mut()
+            .unwrap()
+            .requested_offsets
+            .insert(offset);
     }
 
     pub fn connect(&mut self) {
         //handshakes are 68 bytes long
 
-        self.log_info("Connecting to peer");
+        self.log_info("Connecting to peer...");
         let mut stream = match TcpStream::connect(self.peer) {
             Ok(stream) => {
+                self.log_info("Connected.");
                 self.connected = true;
                 stream
             }
@@ -398,7 +413,6 @@ impl<'a> ConnectionHandler<'a> {
             }
 
             if self.peer_bitfield.is_some()
-                && self.current_piece.is_none()
                 && (!self.peer_interested
                     && self.file_handler.lock().unwrap().written_bytes
                         == self.torrent_file.info.length)
@@ -416,7 +430,7 @@ impl<'a> ConnectionHandler<'a> {
                 if self.next_downloadable_pieces.len() > 0 {
                     let next_piece = self.next_downloadable_pieces.pop_front().unwrap();
                     self.start_new_piece(next_piece as u32);
-                    self.request_piece(next_piece as u32, 0u32);
+                    //self.request_piece(next_piece as u32, 0u32);
                 }
 
                 if self.peer_has_missing_pieces {}

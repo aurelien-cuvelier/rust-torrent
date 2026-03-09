@@ -8,7 +8,7 @@ use super::message::{MessageType, REQUEST_PIECE_SIZE};
 impl ConnectionHandler<'_> {
     pub(crate) fn handle_new_piece(&mut self, raw_msg: &[u8]) {
         let piece_index = u32::from_be_bytes(raw_msg[0..4].try_into().unwrap());
-        let offset_inside_piece = u32::from_be_bytes(raw_msg[4..8].try_into().unwrap());
+        let piece_offset = u32::from_be_bytes(raw_msg[4..8].try_into().unwrap());
 
         let current_piece_index = self.current_piece.as_ref().unwrap().index;
 
@@ -27,15 +27,21 @@ impl ConnectionHandler<'_> {
 
         let current_piece = self.current_piece.as_mut().unwrap();
 
-        let min_required_length = (offset_inside_piece as usize) + block_data.len();
+        let min_required_length = piece_offset as usize + block_data.len();
         if current_piece.data.len() < min_required_length {
+            // println!(
+            //     "expending piece data length from {} to {}",
+            //     current_piece.data.len(),
+            //     min_required_length
+            // );
             current_piece.data.resize(min_required_length, 0);
         }
 
-        current_piece.data[(offset_inside_piece as usize)..min_required_length]
+        //println!("writing data from offset {piece_offset} to {min_required_length}");
+        current_piece.data[(piece_offset as usize)..min_required_length]
             .copy_from_slice(&block_data);
 
-        current_piece.received_offsets.insert(offset_inside_piece);
+        current_piece.received_offsets.insert(piece_offset);
         current_piece.missing_data -= block_data.len();
 
         /*
@@ -47,36 +53,19 @@ impl ConnectionHandler<'_> {
 
         self.log_debug(
                 format!(
-                    "received {} bytes for piece index {piece_index} & offset {offset_inside_piece} missing data: {}",
+                    "received {} bytes for piece index {piece_index} & offset {piece_offset} missing data: {}",
                     block_data.len(),
-                    self.current_piece.as_ref().unwrap().missing_data
+                    current_piece.missing_data
                 )
                 .as_str(),
         );
 
         if current_piece.missing_data > 0 {
-            let max_offset_index_in_piece =
-                (self.torrent_file.info.piece_length as u32).div_ceil(REQUEST_PIECE_SIZE);
-
-            let next_offset = (0..max_offset_index_in_piece).find_map(|offset_index| {
-                let offset = offset_index * REQUEST_PIECE_SIZE;
-                if current_piece.received_offsets.contains(&offset) {
-                    None
-                } else {
-                    Some(offset)
-                }
-            });
-
-            if next_offset.is_none() {
-                panic!(
-                    "searched next offset but found none for piece index: {piece_index} received offsets: {:?}",
-                    current_piece.received_offsets
-                );
-            }
-
-            self.request_piece(piece_index, next_offset.unwrap());
+            //we still have data to download
             return;
         }
+
+        //we're done downloading the piece, we checksum it and write if it matches
 
         let hash_data = Sha1::new()
             .chain_update(self.current_piece.as_ref().unwrap().data.as_slice())
@@ -116,7 +105,7 @@ impl ConnectionHandler<'_> {
             self.send_have(piece_index);
         }
 
-        self.log_debug(
+        self.log_info(
             format!(
                 "download progress: {}%",
                 (total_written_bytes as f64 / self.torrent_file.info.length as f64) * 100f64

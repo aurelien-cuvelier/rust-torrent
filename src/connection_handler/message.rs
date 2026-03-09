@@ -56,6 +56,7 @@ pub struct Piece {
     pub data: Vec<u8>,
     pub received_offsets: HashSet<u32>,
     pub missing_data: usize,
+    pub requested_offsets: HashSet<u32>,
 }
 
 #[derive(Debug)]
